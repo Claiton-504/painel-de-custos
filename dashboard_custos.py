@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (Painel Executivo Robusto)
-==============================================================
+Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Gemini Real)
+===================================================================
 """
 
 from pathlib import Path
@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-import re
+from google import genai
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -73,7 +73,7 @@ def carregar_dados():
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente")
+st.caption("Dashboard Executivo Inteligente com IA Gemini")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
@@ -157,7 +157,7 @@ aba1, aba2, aba3, aba4 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
     "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente Analítico Inteligente"
+    "🤖 Assistente IA (Gemini)"
 ])
 
 with aba1:
@@ -234,98 +234,4 @@ with aba3:
     st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
     try:
         event = st.dataframe(
-            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
-                {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
-            ),
-            use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
-        )
-        
-        selected_rows = getattr(event, "selection", {}).get("rows", [])
-        if selected_rows:
-            linha_selecionada = tab_show.iloc[selected_rows[0]]
-            conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
-            conta_nome_completo = linha_selecionada["Conta"]
-            st.markdown("---")
-            st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
-            if df_det is not None and not df_det.empty:
-                df_det_filtrado = df_det.copy()
-                if centro_sel != "Todos os centros":
-                    c_codigo = centro_sel.split(" - ")[0].strip()
-                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
-                df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
-                if mes_sel != "Todos os meses":
-                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
-                if not df_det_filtrado.empty:
-                    cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
-                    st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
-                else:
-                    st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
-            else:
-                st.warning("Ficheiro detalhes_longos.csv não disponível.")
-    except Exception as e:
-        st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
-
-with aba4:
-    st.subheader("🤖 Assistente Analítico Inteligente")
-    st.markdown("Faça perguntas detalhadas (ex: *'Qual o realizado do centro 247 entre o mês 1 e 3?'*, *'Quais as contas críticas?'*).")
-    
-    if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise analítica dos custos?"}]
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if prompt := st.chat_input("Faça uma pergunta detalhada sobre o orçamento..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("A processar cálculo analítico..."):
-                resposta_ia = ""
-                try:
-                    p_lower = prompt.lower()
-                    if any(term in p_lower for term in ["calcul", "mes", "mês", "centro", "entre", "247"]):
-                        df_analise = df_det.copy() if df_det is not None else pd.DataFrame()
-                        nums_encontrados = re.findall(r'\d+', p_lower)
-                        
-                        if not df_analise.empty and nums_encontrados:
-                            meses_possiveis = [int(n) for n in nums_encontrados if int(n) <= 12]
-                            if "mes" in p_lower or "mês" in p_lower:
-                                if len(meses_possiveis) >= 2:
-                                    m_min, m_max = min(meses_possiveis[:2]), max(meses_possiveis[:2])
-                                    df_analise = df_analise[(df_analise["Mes_Trans"] >= m_min) & (df_analise["Mes_Trans"] <= m_max)]
-                                elif len(meses_possiveis) == 1:
-                                    df_analise = df_analise[df_analise["Mes_Trans"] == meses_possiveis[0]]
-                            
-                            centros_possiveis = [n for n in nums_encontrados if int(n) > 12 or len(n) >= 3]
-                            if centros_possiveis:
-                                c_alvo = centros_possiveis[0]
-                                df_analise = df_analise[df_analise["Centro_Codigo"].astype(str).str.contains(c_alvo)]
-
-                        if not df_analise.empty:
-                            total_calculado = df_analise["Valor"].sum()
-                            qtd_lancamentos = len(df_analise)
-                            resposta_ia = "### 📊 Resultado do Cálculo Analítico\n"
-                            resposta_ia += f"- **Consulta:** `{prompt}`\n"
-                            resposta_ia += f"- **Valor Total Calculado:** **R$ {total_calculado:,.2f}**\n"
-                            resposta_ia += f"- **Total de Lançamentos Encontrados:** {qtd_lancamentos} registos analíticos.\n\n"
-                            resposta_ia += "*Principais contas movimentadas:*\n"
-                            
-                            top_contas = df_analise.groupby("Conta_Codigo")["Valor"].sum().reset_index().sort_values(by="Valor", ascending=False).head(5)
-                            for _, row in top_contas.iterrows():
-                                resposta_ia += f"- Conta `{row['Conta_Codigo']}`: R$ {row['Valor']:,.2f}\n"
-                        else:
-                            resposta_ia = "Não encontrei lançamentos detalhados suficientes para os critérios exatos solicitados na base analítica."
-                    else:
-                        criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
-                        resposta_ia = "### 📋 Resumo Executivo Geral\n"
-                        resposta_ia += f"- **Orçamento Global:** R$ {orc_anual:,.2f} | **Realizado:** R$ {real_anual:,.2f} | **Saldo:** R$ {saldo_anual:,.2f} ({pct_anual:.1%})\n"
-                        resposta_ia += f"- **Contas em Estado Crítico:** {len(criticas)} contas.\n"
-                        resposta_ia += "*Dica: Pode perguntar por \"críticas\", \"resumo\" ou pedir o cálculo de meses e centros específicos.*"
-                except Exception as e:
-                    resposta_ia = f"Erro ao processar a consulta: {e}"
-
-                st.markdown(resposta_ia)
-                st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(color
