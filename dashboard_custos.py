@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
+import time
 from google import genai
 
 st.set_page_config(
@@ -275,27 +276,54 @@ with aba4:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("A analisar com redundância de alta disponibilidade..."):
+                with st.spinner("A analisar com redundância e alta disponibilidade..."):
                     resposta_ia = None
-                    # Lista de modelos de fallback para garantir disponibilidade contínua
                     modelos_para_tentar = ["gemini-3.8-flash", "gemini-1.5-flash"]
                     
+                    resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                    prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
+
+                    # Tentar chamadas com os modelos disponíveis em loop com retentativa
                     for modelo_atual in modelos_para_tentar:
                         try:
-                            resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                            prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
-                            
                             response = client.models.generate_content(
                                 model=modelo_atual, 
                                 contents=prompt_sistema
                             )
-                            resposta_ia = response.text
-                            break # Se obtiver sucesso, sai do ciclo
+                            if response and response.text:
+                                resposta_ia = response.text
+                                break
                         except Exception:
-                            continue # Se um modelo falhar por sobrecarga, tenta o próximo automaticamente
+                            time.sleep(1) # breve pausa antes de tentar a rota seguinte
+                            continue
                     
-                    if resposta_ia:
-                        st.markdown(resposta_ia)
-                        st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
-                    else:
-                        st.error("⚠️ Os servidores do Gemini estão temporariamente sobrecarregados. Por favor, tente novamente em instantes.")
+                    # FALLBACK INTELIGENTE LOCAL (Garante que nunca falha e dá sempre resposta útil)
+                    if not resposta_ia:
+                        criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
+                        atencao = tab_show[tab_show["Status"].str.contains("Atenção")]
+                        
+                        resposta_ia = f"""### 📊 Relatório Financeiro Automático (Modo Alta Disponibilidade)
+Como os servidores externos do Gemini estão momentaneamente congestionados, gerei esta análise instantânea com base nos dados atuais do painel:
+
+- **Contexto Ativo:** Centro: `{centro_sel}` | Período: `{mes_sel}`
+- **Orçamento Total do Período:** R$ {orc_anual:,.2f}
+- **Realizado Acumulado:** R$ {real_anual:,.2f}
+- **Saldo Global:** R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
+
+⚠️ **Contas em Estado Crítico ({len(criticas)}):**
+"""
+                        if not criticas.empty:
+                            for _, r in criticas.iterrows():
+                                resposta_ia += f"- **{r['Conta']}**: Orçado R$ {r['Orcado']:,.2f} | Realizado R$ {r['Realizado']:,.2f} ({r['% Consumido']:.1%})\n"
+                        else:
+                            resposta_ia += "- Nenhuma conta em estado crítico no momento.\n"
+
+                        resposta_ia += f"\n💡 **Contas em Atenção ({len(atencao)}):**\n"
+                        if not atencao.empty:
+                            for _, r in atencao.iterrows():
+                                resposta_ia += f"- **{r['Conta']}**: {r['% Consumido']:.1%} consumido.\n"
+                        else:
+                            resposta_ia += "- Nenhuma conta em patamar de atenção.\n"
+
+                    st.markdown(resposta_ia)
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
