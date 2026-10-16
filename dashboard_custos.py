@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + IA Gemini 1.5 Flash Estável)
-======================================================================
+Dashboard de Custos 2026 — Streamlit (BI + Assistente Analítico Local Inteligente)
+==============================================================================
 """
 
 from pathlib import Path
@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-from google import genai
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -69,7 +68,7 @@ def carregar_dados():
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente com IA (Streamlit & Google Gemini)")
+st.caption("Dashboard Executivo Inteligente com Assistente Analítico Local")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado.")
@@ -153,7 +152,7 @@ aba1, aba2, aba3, aba4 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
     "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente IA (Gemini)"
+    "🤖 Assistente Analítico Local"
 ])
 
 with aba1:
@@ -254,68 +253,61 @@ with aba3:
                 st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
 
 with aba4:
-    st.subheader("🤖 Assistente IA de Custos (Google Gemini)")
+    st.subheader("🤖 Assistente Analítico Local Inteligente")
+    st.markdown("Faça perguntas sobre o orçamento (ex: *'Qual o saldo?'*, *'Quais as contas críticas?'*, ou digite o nome de uma conta para pesquisar).")
     
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "assistant", "content": "Olá! Sou o seu assistente de custos local. Como posso ajudar na análise?"}]
 
-    if not api_key:
-        st.warning("⚠️ Chave da API do Gemini não encontrada nos secrets do Streamlit.")
-    else:
-        client = genai.Client(api_key=api_key)
-        
-        if "messages" not in st.session_state:
-            st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise dos custos?"}]
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    if prompt := st.chat_input("Pergunte sobre o orçamento..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                with st.spinner("A processar a análise com Gemini 1.5 Flash..."):
-                    resposta_ia = None
-                    resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                    prompt_sistema = f"Atue como um controlador financeiro especialista. Responda à pergunta com base estrita nestes dados:\nCentro: {centro_sel}, Mês: {mes_sel}\nTabela:\n{resumo_contas_csv}\n\nPergunta: {prompt}"
-
-                    try:
-                        # Utiliza o modelo 1.5 Flash (altamente estável e rápido)
-                        response = client.models.generate_content(
-                            model="gemini-1.5-flash", 
-                            contents=prompt_sistema
-                        )
-                        if response and response.text:
-                            resposta_ia = response.text
-                    except Exception:
-                        # Fallback de segurança local em caso de instabilidade externa
-                        criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
-                        atencao = tab_show[tab_show["Status"].str.contains("Atenção")]
-                        
-                        resposta_ia = f"""### 📊 Relatório Financeiro Executivo (Modo de Alta Disponibilidade)
-*Nota: Os servidores externos do Gemini estão com pico momentâneo. Para garantir a entrega imediata da informação, elaborei esta análise analítica diretamente com os dados filtrados do painel:*
-
-- **Filtros Ativos:** Centro: `{centro_sel}` | Período: `{mes_sel}`
+        with st.chat_message("assistant"):
+            with st.spinner("A analisar dados localmente..."):
+                p_lower = prompt.lower()
+                criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
+                atencao = tab_show[tab_show["Status"].str.contains("Atenção")]
+                
+                # Motor de interpretação local inteligente baseado na pergunta do utilizador
+                if "resumo" in p_lower or "geral" in p_lower or "total" in p_lower or "saldo" in p_lower:
+                    resposta_ia = f"""### 📋 Resumo Executivo ({centro_sel} | {mes_sel})
 - **Orçamento Total:** R$ {orc_anual:,.2f}
 - **Realizado Acumulado:** R$ {real_anual:,.2f}
-- **Saldo Atual:** R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
-
-🔴 **Contas em Estado Crítico ({len(criticas)}):**
+- **Saldo Global:** R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
 """
-                        if not criticas.empty:
-                            for _, r in criticas.iterrows():
-                                resposta_ia += f"- **{r['Conta']}**: Orçado R$ {r['Orcado']:,.2f} | Realizado R$ {r['Realizado']:,.2f} ({r['% Consumido']:.1%})\n"
-                        else:
-                            resposta_ia += "- Nenhuma conta em estado crítico sob os filtros atuais.\n"
+                elif "crítico" in p_lower or "critico" in p_lower or "estouro" in p_lower or "estourou" in p_lower:
+                    resposta_ia = f"### 🔴 Contas em Estado Crítico ({len(criticas)} encontradas):\n"
+                    if not criticas.empty:
+                        for _, r in criticas.iterrows():
+                            resposta_ia += f"- **{r['Conta']}**: Orçado R$ {r['Orcado']:,.2f} | Realizado R$ {r['Realizado']:,.2f} ({r['% Consumido']:.1%})\n"
+                    else:
+                        resposta_ia += "Nenhuma conta em estado crítico sob os filtros atuais."
+                elif "atenção" in p_lower or "atencao" in p_lower:
+                    resposta_ia = f"### 🟡 Contas em Patamar de Atenção ({len(atencao)} encontradas):\n"
+                    if not atencao.empty:
+                        for _, r in atencao.iterrows():
+                            resposta_ia += f"- **{r['Conta']}**: {r['% Consumido']:.1%} consumido.\n"
+                    else:
+                        resposta_ia += "Nenhuma conta em atenção."
+                else:
+                    # Pesquisa flexível por texto/conta digitada pelo gestor
+                    resultado_busca = tab_show[tab_show["Conta"].str.lower().str.contains(p_lower, na=False)]
+                    if not resultado_busca.empty:
+                        resposta_ia = f"### 🔍 Resultados para '{prompt}':\n"
+                        for _, r in resultado_busca.iterrows():
+                            resposta_ia += f"- **{r['Conta']}** | Orçado: R$ {r['Orcado']:,.2f} | Realizado: R$ {r['Realizado']:,.2f} | Saldo: R$ {r['Saldo']:,.2f} | Status: {r['Status']}\n"
+                    else:
+                        resposta_ia = f"""### 💡 Análise Geral para: "{prompt}"
+- **Filtros Ativos:** Centro: `{centro_sel}` | Período: `{mes_sel}`
+- **Orçamento Total:** R$ {orc_anual:,.2f} | **Realizado:** R$ {real_anual:,.2f} | **Saldo:** R$ {saldo_anual:,.2f} ({pct_anual:.1%})
+- Total de contas analisadas: **{len(tab_show)}** (sendo **{len(criticas)}** em estado crítico e **{len(atencao)}** em atenção).
+*Dica: Pode perguntar por "críticas", "atenção", "resumo" ou digitar parte do nome de uma conta específica.*"""
 
-                        resposta_ia += f"\n🟡 **Contas em Atenção ({len(atencao)}):**\n"
-                        if not atencao.empty:
-                            for _, r in atencao.iterrows():
-                                resposta_ia += f"- **{r['Conta']}**: {r['% Consumido']:.1%} consumido.\n"
-                        else:
-                            resposta_ia += "- Nenhuma conta em patamar de atenção.\n"
-
-                    st.markdown(resposta_ia)
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+                st.markdown(resposta_ia)
+                st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
