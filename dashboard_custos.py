@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (Versão BI Profissional + Assistente IA)
-=============================================================================
+Dashboard de Custos 2026 — Streamlit (BI + IA Gemini Segura)
+===========================================================
 """
 
 from pathlib import Path
@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
+from google import genai
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -33,7 +34,6 @@ BASE = Path(__file__).resolve().parent
 CSV_LONG = BASE / "dados_longos.csv"
 CSV_BASE = BASE / "base_calculada.csv"
 CSV_DETALHES = BASE / "detalhes_longos.csv"
-
 
 @st.cache_data
 def carregar_dados():
@@ -66,11 +66,10 @@ def carregar_dados():
         
     return df, base, df_det
 
-
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente (Streamlit)")
+st.caption("Dashboard Executivo Inteligente com IA (Streamlit & Google Gemini)")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado.")
@@ -85,7 +84,7 @@ meses_disponiveis = sorted(
     [m for m in df["Mes"].astype(str).unique().tolist() if m != "Total" and str(m).isdigit()],
     key=lambda x: int(x),
 )
-mes_sel = st.sidebar.selectbox("Mês", ["Todos os meses"] + meses_disponiveis)
+mes_sel = st.sidebar.selectbox("Mês", ["Todos los meses" if "Todos los meses" in ["Todos os meses"] else "Todos os meses"] + meses_disponiveis if "Todos os meses" in ["Todos os meses"] else ["Todos os meses"] + meses_disponiveis)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
@@ -118,7 +117,6 @@ if mes_sel != "Todos os meses":
 else:
     orc_mes = real_mes = saldo_mes = pct_mes = None
 
-# Preparação dos dados das contas
 contas = d[d["Conta_Codigo"] != "Total"].copy()
 if mes_sel == "Todos os meses":
     prev = contas[(contas["Tipo"] == "Prev.") & (contas["Mes"] == "Total")].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Orcado"})
@@ -151,13 +149,11 @@ def colorir(row):
         return ["background-color: #FFE082"] * len(row)
     return ["background-color: #C8E6C9"] * len(row)
 
-
-# Organização em Abas Profissionais (Incluindo o Assistente IA)
 aba1, aba2, aba3, aba4 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
     "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente IA / Tirar Dúvidas"
+    "🤖 Assistente IA (Gemini)"
 ])
 
 with aba1:
@@ -177,7 +173,6 @@ with aba1:
         m4.metric("% gasto no mês", f"{pct_mes:.1%}")
         
     st.divider()
-    
     st.subheader("Resumo Executivo das Contas")
     st.dataframe(
         tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
@@ -190,7 +185,6 @@ with aba1:
 with aba2:
     st.subheader("Análise Gráfica de Consumo")
     col_g1, col_g2 = st.columns(2)
-    
     with col_g1:
         if mes_sel == "Todos os meses":
             gasto, disponivel, estouro = real_anual, max(0.0, saldo_anual), max(0.0, -saldo_anual)
@@ -203,19 +197,10 @@ with aba2:
             {"Fatia": ["Realizado (gasto)", "Disponível (saldo)", "Estouro"], "Valor": [gasto, disponivel, estouro]}
         )
         pie_df = pie_df[pie_df["Valor"] > 0]
-        
         if not pie_df.empty:
             fig_pie = px.pie(
-                pie_df,
-                names="Fatia",
-                values="Valor",
-                title=f"Distribuição do Orçamento — {titulo}",
-                color="Fatia",
-                color_discrete_map={
-                    "Realizado (gasto)": "#2874A6",
-                    "Disponível (saldo)": "#1E8449",
-                    "Estouro": "#922B21",
-                },
+                pie_df, names="Fatia", values="Valor", title=f"Distribuição do Orçamento — {titulo}",
+                color="Fatia", color_discrete_map={"Realizado (gasto)": "#2874A6", "Disponível (saldo)": "#1E8449", "Estouro": "#922B21"}
             )
             fig_pie.update_traces(textposition="inside", textinfo="percent+label")
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -229,133 +214,75 @@ with aba2:
             st.error("Orçamento Estourado!")
         else:
             st.success("Dentro do Orçamento previsto")
-        total = gasto + disponivel + estouro
-        st.write(f"- Consumido: **{(gasto / total if total else 0):.1%}**")
 
     st.divider()
-    
     st.subheader("Comparativo: Orçado vs. Realizado por Conta")
     if not tab_contas.empty:
-        df_barras = tab_contas.melt(
-            id_vars=["Conta_Descricao"],
-            value_vars=["Orcado", "Realizado"],
-            var_name="Tipo",
-            value_name="Valor"
-        )
+        df_barras = tab_contas.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
         fig_bar = px.bar(
-            df_barras,
-            x="Conta_Descricao",
-            y="Valor",
-            color="Tipo",
-            barmode="group",
-            title="Orçado vs Realizado por Conta",
-            color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
+            df_barras, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
+            title="Orçado vs Realizado por Conta", color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
         )
         fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45)
         st.plotly_chart(fig_bar, use_container_width=True)
 
 with aba3:
     st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
-    st.info("💡 **Como usar:** Clique numa linha da tabela abaixo para expandir e ver os itens, fornecedores e documentos correspondentes.")
-    
     event = st.dataframe(
         tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
             {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
         ),
-        use_container_width=True,
-        height=380,
-        selection_mode="single-row",
-        on_select="rerun",
-        key="tabela_contas_aba3"
+        use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
     )
-
     selected_rows = event.selection.get("rows", [])
-
     if selected_rows:
         linha_selecionada = tab_show.iloc[selected_rows[0]]
         conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
         conta_nome_completo = linha_selecionada["Conta"]
-
         st.markdown("---")
-        st.subheader(f"🔍 Detalhe Analítico de Lançamentos: {conta_nome_completo}")
-
+        st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
         if df_det is not None and not df_det.empty:
             df_det_filtrado = df_det.copy()
-            
             if centro_sel != "Todos os centros":
                 c_codigo = centro_sel.split(" - ")[0].strip()
                 df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
-
             df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
-
             if mes_sel != "Todos os meses":
                 df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
-
             if not df_det_filtrado.empty:
                 cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
-                df_exibir = df_det_filtrado[cols_mostrar].copy()
-                
-                st.dataframe(
-                    df_exibir.style.format({"Valor": "R$ {:,.2f}"}),
-                    use_container_width=True,
-                    height=400
-                )
-                
-                buffer_det = io.BytesIO()
-                with pd.ExcelWriter(buffer_det, engine="openpyxl") as writer:
-                    df_exibir.to_excel(writer, index=False, sheet_name="Detalhes_Lancamentos")
-                buffer_det.seek(0)
-                
-                st.download_button(
-                    label="📥 Descarregar Lançamentos Detalhados em Excel",
-                    data=buffer_det,
-                    file_name=f"Detalhes_Conta_{conta_codigo_clicada}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.warning("Nenhum lançamento detalhado encontrado para esta conta com os filtros atuais.")
-        else:
-            st.info("Nenhum dado detalhado encontrado na pasta 'detalhes'.")
+                st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
 
 with aba4:
-    st.subheader("🤖 Assistente IA de Custos")
-    st.markdown("Tem alguma dúvida sobre os lançamentos, desvios ou contas? Pergunte diretamente ao assistente abaixo:")
+    st.subheader("🤖 Assistente IA de Custos (Google Gemini)")
+    
+    # Carregar chave de forma segura via st.secrets (compatível com GitHub)
+    api_key = st.secrets.get("GEMINI_API_KEY", None)
 
-    # Inicializar histórico de chat no session_state do Streamlit
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Olá! Sou o seu assistente financeiro de custos. Como posso ajudar na auditoria ou análise dos relatórios hoje?"}
-        ]
+    if not api_key:
+        st.warning("⚠️ Chave da API do Gemini não encontrada nos secrets do Streamlit.")
+    else:
+        client = genai.Client(api_key=api_key)
+        if "messages" not in st.session_state:
+            st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise dos custos?"}]
 
-    # Exibir mensagens anteriores do chat
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-    # Entrada de texto do chat
-    if prompt := st.chat_input("Ex: Qual foi a conta que mais estourou o orçamento?"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        # Resposta inteligente baseada nos dados atuais carregados
-        with st.chat_message("assistant"):
-            with st.spinner("Analisando dados do painel..."):
-                # Lógica de resposta baseada no contexto atual do filtro
-                resposta = f"Com base no filtro atual (**Centro:** {centro_sel}, **Mês:** {mes_sel}), analisei os dados financeiros:\n\n"
-                
-                prompt_lower = prompt.lower()
-                if "maior" in prompt_lower or "estourou" in prompt_lower or "crítico" in prompt_lower or "gasto" in prompt_lower:
-                    criticas = tab_show[tab_show["Status"].str.contains("Crítico|Atenção")]
-                    if not criticas.empty:
-                        top_conta = criticas.iloc[0]
-                        resposta += f"A conta com maior atenção/estouro no momento é a **{top_conta['Conta']}**, com um realizado de **R$ {top_conta['Realizado']:,.2f}** frente a um orçamento de **R$ {top_conta['Orcado']:,.2f}** ({top_conta['% Consumido']:.1%} consumido)."
-                    else:
-                        resposta += "Parabéns! No filtro atual não existem contas em estado crítico ou de atenção."
-                elif "resumo" in prompt_lower or "total" in prompt_lower:
-                    resposta += f"O orçamento total é de **R$ {orc_anual:,.2f}**, com um realizado acumulado de **R$ {real_anual:,.2f}**, resultando num saldo de **R$ {saldo_anual:,.2f}** ({pct_anual:.1%} consumido)."
-                else:
-                    resposta += f"Recebi a sua pergunta sobre: *'{prompt}'*. O centro selecionado é **{centro_sel}** e o orçamento consumido total é de **{pct_anual:.1%}**. Pode detalhar a conta específica que gostaria de inspecionar na aba anterior."
-
-                st.markdown(resposta)
-                st.session_state.messages.append({"role": "assistant", "content": resposta})
+            with st.chat_message("assistant"):
+                with st.spinner("A analisar..."):
+                    try:
+                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                        prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
+                        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_sistema)
+                        resposta_ia = response.text
+                        st.markdown(resposta_ia)
+                        st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
