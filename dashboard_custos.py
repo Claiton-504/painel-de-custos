@@ -234,4 +234,47 @@ with aba3:
     st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
     try:
         event = st.dataframe(
-            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(color
+            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
+                {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
+            ),
+            use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
+        )
+        
+        selected_rows = getattr(event, "selection", {}).get("rows", [])
+        if selected_rows:
+            linha_selecionada = tab_show.iloc[selected_rows[0]]
+            conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
+            conta_nome_completo = linha_selecionada["Conta"]
+            st.markdown("---")
+            st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
+            if df_det is not None and not df_det.empty:
+                df_det_filtrado = df_det.copy()
+                if centro_sel != "Todos os centros":
+                    c_codigo = centro_sel.split(" - ")[0].strip()
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
+                df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
+                if mes_sel != "Todos os meses":
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
+                if not df_det_filtrado.empty:
+                    cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
+                    st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
+                else:
+                    st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
+            else:
+                st.warning("Ficheiro detalhes_longos.csv não disponível.")
+    except Exception as e:
+        st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
+
+with aba4:
+    st.subheader("🤖 Assistente IA de Custos (Google Gemini)")
+    st.markdown("Faça perguntas naturais sobre o orçamento (ex: *'Preciso de uma análise detalhada do centro 247'*, *'Quais as contas mais críticas?'*).")
+    
+    api_key = st.secrets.get("GEMINI_API_KEY", None)
+
+    if not api_key:
+        st.warning("⚠️ Chave da API do Gemini não encontrada nos segredos do Streamlit (`secrets.toml`).")
+    else:
+        try:
+            client = genai.Client(api_key=api_key)
+            
+            if "messages"
