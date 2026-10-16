@@ -55,7 +55,7 @@ html, body, [class*="css"] {{
 .main {{ background: {C['fundo']}; }}
 .block-container {{
     padding: 1.25rem 1.5rem 2rem !important;
-    max-width: 1180px !important;
+    max-width: 1400px !important;
 }}
 [data-testid="stSidebar"] {{
     background: {C['card']};
@@ -433,9 +433,12 @@ if not visao_todos:
 # ═══════════════════════════════════════════════════════════
 # DONUT + TABELA
 # ═══════════════════════════════════════════════════════════
-c1, c2 = st.columns([2, 3], gap="large")
+# ═══════════════════════════════════════════════════════════
+# DONUT + TABELA (tabela em largura total — sem rolagem lateral)
+# ═══════════════════════════════════════════════════════════
+g1, g2 = st.columns([1, 1], gap="large")
 
-with c1:
+with g1:
     st.markdown(f'<p class="sec">Composição · {rotulo}</p>', unsafe_allow_html=True)
     labels, values, colors = [], [], []
     if real > 0:
@@ -452,7 +455,7 @@ with c1:
             hovertemplate="%{label}<br>R$ %{value:,.2f}<extra></extra>",
         ))
         fig.update_layout(
-            height=280, margin=dict(t=10, b=10, l=10, r=10),
+            height=260, margin=dict(t=10, b=10, l=10, r=10),
             paper_bgcolor="rgba(0,0,0,0)",
             showlegend=True,
             legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center", font=dict(size=12)),
@@ -465,41 +468,81 @@ with c1:
     else:
         st.info("Sem valores para o gráfico.")
 
-with c2:
-    if visao_todos:
-        st.markdown(f'<p class="sec">Centros de custo · {rotulo}</p>', unsafe_allow_html=True)
-        st.markdown(
-            '<p class="muted">Um centro por linha. Selecione um centro na lateral para abrir as contas.</p>',
-            unsafe_allow_html=True,
-        )
-        show = resumo_centros(df, mes_sel).rename(columns={"%": "%"})[
-            ["Centro", "Orcado", "Realizado", "Saldo", "%", "Status"]
-        ]
-        st.dataframe(style_status(show), use_container_width=True, height=320, hide_index=True)
-    else:
-        st.markdown(
-            f'<p class="sec">Contas · {centro_sel.split(" - ")[0]} · {rotulo}</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p class="muted">Ordenado por criticidade. Contas sem movimento ocultas.</p>',
-            unsafe_allow_html=True,
-        )
-        tab = tabela_contas(d, mes_sel)
-        show = tab.rename(columns={"%": "%"})[
-            ["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]
-        ]
-        st.dataframe(style_status(show), use_container_width=True, height=320, hide_index=True)
+with g2:
+    st.markdown(f'<p class="sec">Leitura rápida · {rotulo}</p>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:1.1rem 1.25rem;">
+  <div style="font-size:0.8rem;color:#64748b;margin-bottom:0.5rem;">Síntese do filtro</div>
+  <div style="font-size:1.05rem;font-weight:600;color:#0f172a;margin-bottom:0.35rem;">
+    Orçado R$ {orc:,.2f} · Realizado R$ {real:,.2f}
+  </div>
+  <div style="font-size:0.9rem;color:{'#047857' if saldo>=0 else '#b91c1c'};">
+    Saldo R$ {saldo:,.2f} ({pct:.1%} consumido)
+  </div>
+  <div style="font-size:0.8rem;color:#64748b;margin-top:0.75rem;">
+    Use a tabela abaixo para detalhar centros ou contas. Críticos aparecem primeiro.
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
-        # Download
-        csv_bytes = show.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "Baixar contas (CSV)",
-            data=csv_bytes,
-            file_name=f"contas_{centro_sel.split(' - ')[0]}_{mes_sel}.csv",
-            mime="text/csv",
-        )
-
+# Tabela em largura total
+st.markdown("")
+if visao_todos:
+    st.markdown(f'<p class="sec">Centros de custo · {rotulo}</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="muted">Um centro por linha. Selecione um centro na lateral para abrir as contas.</p>',
+        unsafe_allow_html=True,
+    )
+    show = resumo_centros(df, mes_sel)[["Centro", "Orcado", "Realizado", "Saldo", "%", "Status"]]
+    st.dataframe(
+        style_status(show),
+        use_container_width=True,
+        height=min(56 + 38 * max(len(show), 1), 420),
+        hide_index=True,
+        column_config={
+            "Centro": st.column_config.TextColumn("Centro de custo", width="large"),
+            "Orcado": st.column_config.NumberColumn("Orçado", width="medium"),
+            "Realizado": st.column_config.NumberColumn("Realizado", width="medium"),
+            "Saldo": st.column_config.NumberColumn("Saldo", width="medium"),
+            "%": st.column_config.NumberColumn("%", width="small"),
+            "Status": st.column_config.TextColumn("Status", width="small"),
+        },
+    )
+else:
+    st.markdown(
+        f'<p class="sec">Contas · {centro_sel.split(" - ")[0]} · {rotulo}</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="muted">Ordenado por criticidade. Contas sem movimento ocultas.</p>',
+        unsafe_allow_html=True,
+    )
+    tab = tabela_contas(d, mes_sel)
+    show = tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]]
+    st.dataframe(
+        style_status(show),
+        use_container_width=True,
+        height=min(56 + 36 * max(len(show), 1), 480),
+        hide_index=True,
+        column_config={
+            "Conta": st.column_config.TextColumn("Conta", width="large"),
+            "Orcado": st.column_config.NumberColumn("Orçado", width="medium"),
+            "Realizado": st.column_config.NumberColumn("Realizado", width="medium"),
+            "Saldo": st.column_config.NumberColumn("Saldo", width="medium"),
+            "%": st.column_config.NumberColumn("%", width="small"),
+            "Status": st.column_config.TextColumn("Status", width="small"),
+        },
+    )
+    csv_bytes = show.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "Baixar contas (CSV)",
+        data=csv_bytes,
+        file_name=f"contas_{centro_sel.split(' - ')[0]}_{mes_sel}.csv",
+        mime="text/csv",
+    )
 
 # ═══════════════════════════════════════════════════════════
 # TOP CRÍTICOS (lista curta)
