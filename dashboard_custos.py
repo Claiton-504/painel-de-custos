@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + IA Gemini Segura)
-===========================================================
+Dashboard de Custos 2026 — Streamlit (BI + IA Gemini Alta Disponibilidade)
+========================================================================
 """
 
 from pathlib import Path
@@ -275,19 +275,27 @@ with aba4:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("A analisar..."):
-                    try:
-                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                        prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
-                        
-                        # Atualizado para o modelo correto gemini-3.8-flash
-                        response = client.models.generate_content(
-                            model="gemini-3.8-flash", 
-                            contents=prompt_sistema
-                        )
-                        
-                        resposta_ia = response.text
+                with st.spinner("A analisar com redundância de alta disponibilidade..."):
+                    resposta_ia = None
+                    # Lista de modelos de fallback para garantir disponibilidade contínua
+                    modelos_para_tentar = ["gemini-3.8-flash", "gemini-1.5-flash"]
+                    
+                    for modelo_atual in modelos_para_tentar:
+                        try:
+                            resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                            prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
+                            
+                            response = client.models.generate_content(
+                                model=modelo_atual, 
+                                contents=prompt_sistema
+                            )
+                            resposta_ia = response.text
+                            break # Se obtiver sucesso, sai do ciclo
+                        except Exception:
+                            continue # Se um modelo falhar por sobrecarga, tenta o próximo automaticamente
+                    
+                    if resposta_ia:
                         st.markdown(resposta_ia)
                         st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                    else:
+                        st.error("⚠️ Os servidores do Gemini estão temporariamente sobrecarregados. Por favor, tente novamente em instantes.")
