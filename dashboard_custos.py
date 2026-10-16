@@ -84,7 +84,7 @@ meses_disponiveis = sorted(
     [m for m in df["Mes"].astype(str).unique().tolist() if m != "Total" and str(m).isdigit()],
     key=lambda x: int(x),
 )
-mes_sel = st.sidebar.selectbox("Mês", ["Todos los meses" if "Todos los meses" in ["Todos os meses"] else "Todos os meses"] + meses_disponiveis if "Todos os meses" in ["Todos os meses"] else ["Todos os meses"] + meses_disponiveis)
+mes_sel = st.sidebar.selectbox("Mês", ["Todos os meses"] + meses_disponiveis)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
@@ -256,7 +256,6 @@ with aba3:
 with aba4:
     st.subheader("🤖 Assistente IA de Custos (Google Gemini)")
     
-    # Carregar chave de forma segura via st.secrets (compatível com GitHub)
     api_key = st.secrets.get("GEMINI_API_KEY", None)
 
     if not api_key:
@@ -280,7 +279,13 @@ with aba4:
                     try:
                         resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
                         prompt_sistema = f"Analise como controlador financeiro. Centro: {centro_sel}, Mês: {mes_sel}. Dados:\n{resumo_contas_csv}\nPergunta: {prompt}"
-                        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_sistema)
+                        
+                        # Atualizado para o modelo correto gemini-3.8-flash
+                        response = client.models.generate_content(
+                            model="gemini-3.8-flash", 
+                            contents=prompt_sistema
+                        )
+                        
                         resposta_ia = response.text
                         st.markdown(resposta_ia)
                         st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
