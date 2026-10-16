@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-from google import genai
+import re
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -288,7 +288,6 @@ with aba4:
                     p_lower = prompt.lower()
                     if any(term in p_lower for term in ["calcul", "mes", "mês", "centro", "entre", "247"]):
                         df_analise = df_det.copy() if df_det is not None else pd.DataFrame()
-                        import re
                         nums_encontrados = re.findall(r'\d+', p_lower)
                         
                         if not df_analise.empty and nums_encontrados:
@@ -308,13 +307,12 @@ with aba4:
                         if not df_analise.empty:
                             total_calculado = df_analise["Valor"].sum()
                             qtd_lancamentos = len(df_analise)
-                            resposta_ia = f"""### 📊 Resultado do Cálculo Analítico
-- **Consulta:** `{prompt}`
-- **Valor Total Calculado:** **R$ {total_calculado:,.2f}**
-- **Total de Lançamentos Encontrados:** {qtd_lancamentos} registos analíticos.
-
-*Principais contas movimentadas:*
-"""
+                            resposta_ia = "### 📊 Resultado do Cálculo Analítico\n"
+                            resposta_ia += f"- **Consulta:** `{prompt}`\n"
+                            resposta_ia += f"- **Valor Total Calculado:** **R$ {total_calculado:,.2f}**\n"
+                            resposta_ia += f"- **Total de Lançamentos Encontrados:** {qtd_lancamentos} registos analíticos.\n\n"
+                            resposta_ia += "*Principais contas movimentadas:*\n"
+                            
                             top_contas = df_analise.groupby("Conta_Codigo")["Valor"].sum().reset_index().sort_values(by="Valor", ascending=False).head(5)
                             for _, row in top_contas.iterrows():
                                 resposta_ia += f"- Conta `{row['Conta_Codigo']}`: R$ {row['Valor']:,.2f}\n"
@@ -322,4 +320,12 @@ with aba4:
                             resposta_ia = "Não encontrei lançamentos detalhados suficientes para os critérios exatos solicitados na base analítica."
                     else:
                         criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
-                        resposta_ia = f"""### 📋 Res
+                        resposta_ia = "### 📋 Resumo Executivo Geral\n"
+                        resposta_ia += f"- **Orçamento Global:** R$ {orc_anual:,.2f} | **Realizado:** R$ {real_anual:,.2f} | **Saldo:** R$ {saldo_anual:,.2f} ({pct_anual:.1%})\n"
+                        resposta_ia += f"- **Contas em Estado Crítico:** {len(criticas)} contas.\n"
+                        resposta_ia += "*Dica: Pode perguntar por \"críticas\", \"resumo\" ou pedir o cálculo de meses e centros específicos.*"
+                except Exception as e:
+                    resposta_ia = f"Erro ao processar a consulta: {e}"
+
+                st.markdown(resposta_ia)
+                st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
