@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + Assistente Analítico Local Inteligente)
-==============================================================================
+Dashboard de Custos 2026 — Streamlit (BI + Assistente Analítico Inteligente)
+==========================================================================
 """
 
 from pathlib import Path
@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
+from google import genai
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -68,7 +69,7 @@ def carregar_dados():
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente com Assistente Analítico Local")
+st.caption("Dashboard Executivo Inteligente com Assistente Analítico")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado.")
@@ -152,7 +153,7 @@ aba1, aba2, aba3, aba4 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
     "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente Analítico Local"
+    "🤖 Assistente Analítico Inteligente"
 ])
 
 with aba1:
@@ -206,108 +207,3 @@ with aba2:
 
     with col_g2:
         st.markdown(f"**Indicadores do Período ({titulo})**")
-        st.write(f"- Realizado: **R$ {gasto:,.2f}**")
-        st.write(f"- Disponível: **R$ {disponivel:,.2f}**")
-        if estouro > 0:
-            st.write(f"- Estouro: **R$ {estouro:,.2f}**")
-            st.error("Orçamento Estourado!")
-        else:
-            st.success("Dentro do Orçamento previsto")
-
-    st.divider()
-    st.subheader("Comparativo: Orçado vs. Realizado por Conta")
-    if not tab_contas.empty:
-        df_barras = tab_contas.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
-        fig_bar = px.bar(
-            df_barras, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
-            title="Orçado vs Realizado por Conta", color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
-        )
-        fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45)
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-with aba3:
-    st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
-    event = st.dataframe(
-        tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
-            {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
-        ),
-        use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
-    )
-    selected_rows = event.selection.get("rows", [])
-    if selected_rows:
-        linha_selecionada = tab_show.iloc[selected_rows[0]]
-        conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
-        conta_nome_completo = linha_selecionada["Conta"]
-        st.markdown("---")
-        st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
-        if df_det is not None and not df_det.empty:
-            df_det_filtrado = df_det.copy()
-            if centro_sel != "Todos os centros":
-                c_codigo = centro_sel.split(" - ")[0].strip()
-                df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
-            df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
-            if mes_sel != "Todos os meses":
-                df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
-            if not df_det_filtrado.empty:
-                cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
-                st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
-
-with aba4:
-    st.subheader("🤖 Assistente Analítico Local Inteligente")
-    st.markdown("Faça perguntas sobre o orçamento (ex: *'Qual o saldo?'*, *'Quais as contas críticas?'*, ou digite o nome de uma conta para pesquisar).")
-    
-    if "messages" not in st.session_state:
-        st.session_state.messages = [{"role": "assistant", "content": "Olá! Sou o seu assistente de custos local. Como posso ajudar na análise?"}]
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if prompt := st.chat_input("Pergunte sobre o orçamento..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("A analisar dados localmente..."):
-                p_lower = prompt.lower()
-                criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
-                atencao = tab_show[tab_show["Status"].str.contains("Atenção")]
-                
-                # Motor de interpretação local inteligente baseado na pergunta do utilizador
-                if "resumo" in p_lower or "geral" in p_lower or "total" in p_lower or "saldo" in p_lower:
-                    resposta_ia = f"""### 📋 Resumo Executivo ({centro_sel} | {mes_sel})
-- **Orçamento Total:** R$ {orc_anual:,.2f}
-- **Realizado Acumulado:** R$ {real_anual:,.2f}
-- **Saldo Global:** R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
-"""
-                elif "crítico" in p_lower or "critico" in p_lower or "estouro" in p_lower or "estourou" in p_lower:
-                    resposta_ia = f"### 🔴 Contas em Estado Crítico ({len(criticas)} encontradas):\n"
-                    if not criticas.empty:
-                        for _, r in criticas.iterrows():
-                            resposta_ia += f"- **{r['Conta']}**: Orçado R$ {r['Orcado']:,.2f} | Realizado R$ {r['Realizado']:,.2f} ({r['% Consumido']:.1%})\n"
-                    else:
-                        resposta_ia += "Nenhuma conta em estado crítico sob os filtros atuais."
-                elif "atenção" in p_lower or "atencao" in p_lower:
-                    resposta_ia = f"### 🟡 Contas em Patamar de Atenção ({len(atencao)} encontradas):\n"
-                    if not atencao.empty:
-                        for _, r in atencao.iterrows():
-                            resposta_ia += f"- **{r['Conta']}**: {r['% Consumido']:.1%} consumido.\n"
-                    else:
-                        resposta_ia += "Nenhuma conta em atenção."
-                else:
-                    # Pesquisa flexível por texto/conta digitada pelo gestor
-                    resultado_busca = tab_show[tab_show["Conta"].str.lower().str.contains(p_lower, na=False)]
-                    if not resultado_busca.empty:
-                        resposta_ia = f"### 🔍 Resultados para '{prompt}':\n"
-                        for _, r in resultado_busca.iterrows():
-                            resposta_ia += f"- **{r['Conta']}** | Orçado: R$ {r['Orcado']:,.2f} | Realizado: R$ {r['Realizado']:,.2f} | Saldo: R$ {r['Saldo']:,.2f} | Status: {r['Status']}\n"
-                    else:
-                        resposta_ia = f"""### 💡 Análise Geral para: "{prompt}"
-- **Filtros Ativos:** Centro: `{centro_sel}` | Período: `{mes_sel}`
-- **Orçamento Total:** R$ {orc_anual:,.2f} | **Realizado:** R$ {real_anual:,.2f} | **Saldo:** R$ {saldo_anual:,.2f} ({pct_anual:.1%})
-- Total de contas analisadas: **{len(tab_show)}** (sendo **{len(criticas)}** em estado crítico e **{len(atencao)}** em atenção).
-*Dica: Pode perguntar por "críticas", "atenção", "resumo" ou digitar parte do nome de uma conta específica.*"""
-
-                st.markdown(resposta_ia)
-                st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
