@@ -14,11 +14,10 @@ st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed", # Começa recolhida para foco total
+    initial_sidebar_state="collapsed",
 )
 
-# --- SISTEMA DE DESIGN CSS AVANÇADO (Visão Corporativa Moderno) ---
-# Cores: Slate Grey (#475569, #1e293b, #f1f5f9) + Alertas Neutros
+# --- SISTEMA DE DESIGN CSS AVANÇADO ---
 st.markdown("""
     <style>
     /* Reset e Fundo Profissional */
@@ -27,10 +26,9 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
-    /* Bloco Principal sem margens amadoras */
     .block-container {
         padding-top: 1.5rem !important;
-        padding-bottom: 0rem !important;
+        padding-bottom: 1.5rem !important;
         max-width: 95% !important;
     }
 
@@ -61,10 +59,6 @@ st.markdown("""
         padding: 1.5rem;
         border-radius: 16px;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        transition: transform 0.2s ease-in-out;
-    }
-    .kpi-card:hover {
-        transform: translateY(-2px);
     }
     .kpi-title {
         font-size: 13px;
@@ -85,55 +79,15 @@ st.markdown("""
         font-weight: 500;
         margin-top: 5px;
     }
-    
-    /* Layout em Grade para Gráficos e Tabela */
-    .grid-container {
-        display: grid;
-        grid-template-columns: 2fr 3fr; # Proporção 2:3 entre gráficos e tabela
-        gap: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-    .grid-item {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        padding: 1.5rem;
-        border-radius: 16px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-    }
-    .grid-header {
-        font-size: 18px;
-        font-weight: 700;
-        color: #1e293b;
-        margin-bottom: 1.25rem;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
 
-    /* Tabela Executiva Refinada */
-    div[data-testid="stDataFrame"] > div > div > div {
-        border-radius: 12px !important;
-        border: none !important;
-    }
-    .stDataFrame thead th {
-        background-color: #f1f5f9 !important;
-        color: #475569 !important;
-        font-weight: 600 !important;
-        text-transform: uppercase !important;
-        font-size: 11px !important;
-        letter-spacing: 0.5px !important;
-    }
-    
     /* Sidebar Limpa */
     [data-testid="stSidebar"] {
         background-color: #f1f5f9;
         border-right: 1px solid #e2e8f0;
     }
-
     </style>
 """, unsafe_allow_html=True)
 
-# --- CARREGAMENTO DE DADOS (Inalterado, focado em BI local) ---
 BASE = Path(__file__).resolve().parent
 CSV_LONG = BASE / "dados_longos.csv"
 CSV_DETALHES = BASE / "detalhes_longos.csv"
@@ -171,10 +125,9 @@ if df is None:
     st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
     st.stop()
 
-# --- BARRA LATERAL (Sidebar) PROFISSIONAL ---
+# --- BARRA LATERAL (Sidebar) ---
 with st.sidebar:
     st.markdown("### ⚙️ Parâmetros do Painel")
-    
     centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
     centro_sel = st.selectbox("Centro de Custo", centros)
 
@@ -188,12 +141,11 @@ with st.sidebar:
     st.markdown("### 📌 Legenda")
     st.markdown("🟢 **OK**: < 80%\n\n🟡 **Atenção**: ≥ 80%\n\n🔴 **Crítico**: > 100%")
 
-# --- PROCESSAMENTO DE DADOS (Filtros e Cálculos) ---
+# --- PROCESSAMENTO DE DADOS ---
 d = df.copy()
 if centro_sel != "Todos os centros":
     d = d[d["Centro"] == centro_sel]
 
-# Dados Anuais
 d_prev_total = d[(d["Tipo"] == "Prev.") & (d["Mes"] == "Total") & (d["Conta_Codigo"] == "Total")]
 d_real_total = d[(d["Tipo"] == "Real.") & (d["Mes"] == "Total") & (d["Conta_Codigo"] == "Total")]
 
@@ -202,7 +154,6 @@ real_anual = float(d_real_total["Valor_Abs"].sum())
 saldo_anual = orc_anual - real_anual
 pct_anual = (real_anual / orc_anual) if orc_anual > 0 else 0.0
 
-# Dados Mensais (se selecionado)
 if mes_sel != "Todos os meses":
     d_prev_mes = d[(d["Tipo"] == "Prev.") & (d["Mes"].astype(str) == mes_sel) & (d["Conta_Codigo"] == "Total")]
     d_real_mes = d[(d["Tipo"] == "Real.") & (d["Mes"].astype(str) == mes_sel) & (d["Conta_Codigo"] == "Total")]
@@ -215,9 +166,7 @@ else:
     orc_mes = real_mes = saldo_mes = pct_mes = None
     titulo_periodo = "Anual"
 
-# Dados por Conta
 contas = d[d["Conta_Codigo"] != "Total"].copy()
-# Lógica de agrupamento por período
 if mes_sel == "Todos os meses":
     prev = contas[(contas["Tipo"] == "Prev.") & (contas["Mes"] == "Total")].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Orcado"})
     real = contas[(contas["Tipo"] == "Real.") & (contas["Mes"] == "Total")].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Realizado"})
@@ -240,20 +189,17 @@ tab_contas["Conta"] = tab_contas["Conta_Codigo_Fmt"] + " | " + tab_contas["Conta
 tab_contas = tab_contas.sort_values("Realizado", ascending=False)
 tab_show = tab_contas[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status", "Conta_Codigo"]]
 
-# Definição de cores corporativas neutras para a tabela
 def colorir_tabela(row):
-    if "Crítico" in row["Status"]: return ["background-color: #fef2f2; color: #991b1b"] * len(row) # Red Soft
-    if "Atenção" in row["Status"]: return ["background-color: #fffbeb; color: #92400e"] * len(row) # Amber Soft
-    return ["background-color: #f0fdf4; color: #166534"] * len(row) # Green Soft
+    if "Crítico" in row["Status"]: return ["background-color: #fef2f2; color: #991b1b"] * len(row)
+    if "Atenção" in row["Status"]: return ["background-color: #fffbeb; color: #92400e"] * len(row)
+    return ["background-color: #f0fdf4; color: #166534"] * len(row)
 
-# --- LAYOUT DO DASHBOARD (Visão Executiva) ---
+# --- LAYOUT DO DASHBOARD ---
 
-# Cabeçalho Principal
 st.markdown('<div class="dashboard-header">📈 Relatório Analítico de Custos | FY2026</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="dashboard-subheader">Visão de BI para acompanhamento orçamental e controlo de despesas. Filtros: {centro_sel} | {mes_sel}</div>', unsafe_allow_html=True)
 
-# 1. Secção de KPIs (Cartões Executivos)
-# Lógica para exibir Anual ou Mensal nos KPIs principais
+# 1. KPIs
 gasto_exibir, orc_exibir, saldo_exibir, pct_exibir = (real_anual, orc_anual, saldo_anual, pct_anual) if mes_sel == "Todos os meses" else (real_mes, orc_mes, saldo_mes, pct_mes)
 tendencia_cor = "#166534" if saldo_exibir >= 0 else "#991b1b"
 tendencia_txt = "dentro do previsto" if saldo_exibir >= 0 else "excesso orçamental"
@@ -283,63 +229,41 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 2. Secção de Gráficos e Tabela em Grade (Grid Layout)
-st.markdown('<div class="grid-container">', unsafe_allow_html=True)
+# 2. Gráficos e Tabela
+col_graficos, col_tabela = st.columns([2, 3])
 
-# Grid Item 1: Gráfico de Composição e Comparativo
-with st.container():
-    st.markdown('<div class="grid-item">', unsafe_allow_html=True)
-    st.markdown(f'<div class="grid-header">📊 Composição do Gasto — {titulo_periodo}</div>', unsafe_allow_html=True)
-    
-    col_g1, col_g2 = st.columns(2)
-    # Lógica do Gráfico Pie
-    with col_g1:
-        gasto, disponivel, estouro = gasto_exibir, max(0.0, saldo_exibir), max(0.0, -saldo_exibir)
-        pie_df = pd.DataFrame({"Fatia": ["Realizado", "Disponível", "Estouro"], "Valor": [gasto, disponivel, estouro]})
-        pie_df = pie_df[pie_df["Valor"] > 0]
-        if not pie_df.empty:
-            fig_pie = px.pie(pie_df, names="Fatia", values="Valor", color="Fatia", hole=0.6,
-                             color_discrete_map={"Realizado": "#475569", "Disponível": "#10b981", "Estouro": "#ef4444"})
-            fig_pie.update_traces(textposition="inside", textinfo="percent")
-            fig_pie.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_pie, use_container_width=True)
-            
-    # Lógica do Gráfico de Barras por Conta (Top 5 Maiores)
-    with col_g2:
-        top5 = tab_contas.head(5).copy()
-        if not top5.empty:
-            df_bar_top = top5.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
-            fig_bar = px.bar(df_bar_top, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
-                             color_discrete_map={"Orcado": "#94a3b8", "Realizado": "#475569"})
-            fig_bar.update_layout(xaxis_title="", yaxis_title="", showlegend=False, margin=dict(t=0, b=0, l=0, r=0), 
-                                   xaxis_tickangle=-30, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_bar, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+with col_graficos:
+    st.subheader(f"📊 Composição — {titulo_periodo}")
+    gasto, disponivel, estouro = gasto_exibir, max(0.0, saldo_exibir), max(0.0, -saldo_exibir)
+    pie_df = pd.DataFrame({"Fatia": ["Realizado", "Disponível", "Estouro"], "Valor": [gasto, disponivel, estouro]})
+    pie_df = pie_df[pie_df["Valor"] > 0]
+    if not pie_df.empty:
+        fig_pie = px.pie(pie_df, names="Fatia", values="Valor", color="Fatia", hole=0.5,
+                         color_discrete_map={"Realizado": "#475569", "Disponível": "#10b981", "Estouro": "#ef4444"})
+        fig_pie.update_traces(textposition="inside", textinfo="percent")
+        fig_pie.update_layout(margin=dict(t=20, b=20, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-# Grid Item 2: Tabela Executiva de Resumo
-with st.container():
-    st.markdown('<div class="grid-item">', unsafe_allow_html=True)
-    st.markdown(f'<div class="grid-header">📋 Relatório Executivo das Contas Financeiras — {titulo_periodo}</div>', unsafe_allow_html=True)
+with col_tabela:
+    st.subheader(f"📋 Relatório Executivo das Contas — {titulo_periodo}")
     st.dataframe(
         tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir_tabela, axis=1).format(
-            {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:TC,.2f}", "Saldo": "R$ {:TC,.2f}", "% Consumido": "{:.1%}"}
+            {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
         ),
         use_container_width=True,
-        height=400, # Altura fixa para alinhar com o gráfico
+        height=380,
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True) # Fim do Grid Layout
+st.divider()
 
-# 3. Secção Detalhada Analítica (Sempre visível no fundo)
-st.markdown('<div class="grid-item" style="margin-top: -1rem;">', unsafe_allow_html=True)
-st.markdown('<div class="grid-header">🔍 Consulta Detalhada de Lançamentos</div>', unsafe_allow_html=True)
+# 3. Consulta Detalhada de Lançamentos
+st.subheader("🔍 Consulta Detalhada de Lançamentos")
 try:
     event = st.dataframe(
         tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir_tabela, axis=1).format(
-            {"Orcado": "R$ {:,.2f}", "Realizado": "R$TC {:,.2f}", "Saldo": "R$TC {:,.2f}", "% Consumido": "{:.1%}"}
+            {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
         ),
-        use_container_width=True, height=300, selection_mode="single-row", on_select="rerun", key="tabela_detalhe_aba3"
+        use_container_width=True, height=250, selection_mode="single-row", on_select="rerun", key="tabela_detalhe_aba3"
     )
     
     selected_rows = getattr(event, "selection", {}).get("rows", [])
@@ -357,10 +281,9 @@ try:
             if mes_sel != "Todos os meses":
                 df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
             if not df_det_filtrado.empty:
-                cols_mostrar = ["DOC", "Data", "Clifor", "Item", "Valor"]
+                cols_mostrar = [c for c in ["DOC", "Data", "Clifor", "Item", "Valor"] if c in df_det_filtrado.columns]
                 st.dataframe(df_det_filtrado[cols_mostrar].sort_values("Valor", ascending=False).style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=300)
             else:
                 st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
 except Exception as e:
     st.info("Selecione uma linha na tabela executiva acima para visualizar os lançamentos analíticos detalhados.")
-st.markdown('</div>', unsafe_allow_html=True)
