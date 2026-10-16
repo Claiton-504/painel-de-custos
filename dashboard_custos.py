@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Gemini Atualizado)
-========================================================================
+Dashboard de Custos 2026 — Streamlit (Painel Executivo Premium)
+==============================================================
 """
 
 from pathlib import Path
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import io
-from google import genai
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -17,15 +15,42 @@ st.set_page_config(
     layout="wide",
 )
 
+# Estilização CSS Avançada para um visual corporativo moderno
 st.markdown("""
     <style>
+    /* Fundo geral e tipografia limpa */
+    .main {
+        background-color: #f4f6f9;
+    }
+    
+    /* Cartões de Métricas Executivas */
     .metric-card {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 15px;
-        border-radius: 10px;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        margin-bottom: 15px;
+    }
+    .metric-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #1e293b;
+    }
+    
+    /* Cabeçalhos de secção estilizados */
+    h3 {
+        color: #1e293b;
+        font-weight: 600;
+        padding-top: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -72,23 +97,24 @@ def carregar_dados():
 
 df, base, df_det = carregar_dados()
 
-st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente com IA Gemini")
+# Cabeçalho Principal com design limpo
+st.markdown("## 📊 Gestão Executiva de Custos | FY2026")
+st.markdown("Painel analítico para acompanhamento orçamental e controlo de despesas.")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
     st.stop()
 
-# Filtros na barra lateral
-st.sidebar.header("Filtros Globais")
+# Filtros na barra lateral com estilo executivo
+st.sidebar.markdown("### ⚙️ Filtros Globais")
 centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
-centro_sel = st.sidebar.selectbox("Centro de custo", centros)
+centro_sel = st.sidebar.selectbox("Centro de Custo", centros)
 
 meses_disponiveis = sorted(
     [m for m in df["Mes"].astype(str).unique().tolist() if m != "Total" and str(m).isdigit()],
     key=lambda x: int(x),
 )
-mes_sel = st.sidebar.selectbox("Mês", ["Todos os meses"] + meses_disponiveis)
+mes_sel = st.sidebar.selectbox("Período (Mês)", ["Todos os meses"] + meses_disponiveis)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
@@ -117,7 +143,7 @@ if mes_sel != "Todos os meses":
     orc_mes = float(d_prev_mes["Valor_Abs"].sum())
     real_mes = float(d_real_mes["Valor_Abs"].sum())
     saldo_mes = orc_mes - real_mes
-    pct_mes = (real_mes / orc_mes) if orc_mes > 0 else 0.0
+    pct_mes = (real_mes / orc_mes) if real_mes > 0 else 0.0
 else:
     orc_mes = real_mes = saldo_mes = pct_mes = None
 
@@ -148,46 +174,53 @@ tab_show = tab_contas[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "
 
 def colorir(row):
     if "Crítico" in row["Status"]:
-        return ["background-color: #EF9A9A"] * len(row)
+        return ["background-color: #FEE2E2"] * len(row)
     if "Atenção" in row["Status"]:
-        return ["background-color: #FFE082"] * len(row)
-    return ["background-color: #C8E6C9"] * len(row)
+        return ["background-color: #FEF3C7"] * len(row)
+    return ["background-color: #DCFCE7"] * len(row)
 
-aba1, aba2, aba3, aba4 = st.tabs([
+aba1, aba2, aba3 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
-    "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente IA (Gemini)"
+    "📋 Contas & Detalhe Analítico"
 ])
 
 with aba1:
-    st.subheader("Indicadores Principais")
+    st.markdown("### 📈 Indicadores Principais (Anual)")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Orçamento anual", f"R$ {orc_anual:,.2f}")
-    c2.metric("Realizado acumulado", f"R$ {real_anual:,.2f}")
-    c3.metric("Saldo atual", f"R$ {saldo_anual:,.2f}")
-    c4.metric("Orçamento consumido", f"{pct_anual:.1%}")
+    with c1:
+        st.markdown(f"""<div class="metric-card"><div class="metric-title">Orçamento Anual</div><div class="metric-value">R$ {orc_anual:,.2f}</div></div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""<div class="metric-card"><div class="metric-title">Realizado Acumulado</div><div class="metric-value">R$ {real_anual:,.2f}</div></div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""<div class="metric-card"><div class="metric-title">Saldo Atual</div><div class="metric-value">R$ {saldo_anual:,.2f}</div></div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""<div class="metric-card"><div class="metric-title">Orçamento Consumido</div><div class="metric-value">{pct_anual:.1%}</div></div>""", unsafe_allow_html=True)
 
     if mes_sel != "Todos os meses":
-        st.markdown(f"**Desempenho no Mês {mes_sel}**")
+        st.markdown(f"### 📅 Desempenho no Mês {mes_sel}")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Orçado no mês", f"R$ {orc_mes:,.2f}")
-        m2.metric("Realizado no mês", f"R$ {real_mes:,.2f}")
-        m3.metric("Saldo do mês", f"R$ {saldo_mes:,.2f}")
-        m4.metric("% gasto no mês", f"{pct_mes:.1%}")
+        with m1:
+            st.markdown(f"""<div class="metric-card"><div class="metric-title">Orçado no Mês</div><div class="metric-value">R$ {orc_mes:,.2f}</div></div>""", unsafe_allow_html=True)
+        with m2:
+            st.markdown(f"""<div class="metric-card"><div class="metric-title">Realizado no Mês</div><div class="metric-value">R$ {real_mes:,.2f}</div></div>""", unsafe_allow_html=True)
+        with m3:
+            st.markdown(f"""<div class="metric-card"><div class="metric-title">Saldo do Mês</div><div class="metric-value">R$ {saldo_mes:,.2f}</div></div>""", unsafe_allow_html=True)
+        with m4:
+            st.markdown(f"""<div class="metric-card"><div class="metric-title">% Gasto no Mês</div><div class="metric-value">{pct_mes:.1%}</div></div>""", unsafe_allow_html=True)
         
     st.divider()
-    st.subheader("Resumo Executivo das Contas")
+    st.markdown("### 📋 Resumo Executivo das Contas")
     st.dataframe(
         tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
             {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
         ),
         use_container_width=True,
-        height=350,
+        height=380,
     )
 
 with aba2:
-    st.subheader("Análise Gráfica de Consumo")
+    st.markdown("### 📊 Análise Gráfica de Consumo")
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         if mes_sel == "Todos os meses":
@@ -204,34 +237,35 @@ with aba2:
         if not pie_df.empty:
             fig_pie = px.pie(
                 pie_df, names="Fatia", values="Valor", title=f"Distribuição do Orçamento — {titulo}",
-                color="Fatia", color_discrete_map={"Realizado (gasto)": "#2874A6", "Disponível (saldo)": "#1E8449", "Estouro": "#922B21"}
+                color="Fatia", color_discrete_map={"Realizado (gasto)": "#0284c7", "Disponível (saldo)": "#10b981", "Estouro": "#ef4444"}
             )
             fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            fig_pie.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_g2:
-        st.markdown(f"**Indicadores do Período ({titulo})**")
+        st.markdown(f"### 📌 Sumário do Período ({titulo})")
         st.write(f"- Realizado: **R$ {gasto:,.2f}**")
         st.write(f"- Disponível: **R$ {disponivel:,.2f}**")
         if estouro > 0:
             st.write(f"- Estouro: **R$ {estouro:,.2f}**")
-            st.error("Orçamento Estourado!")
+            st.error("⚠️ Orçamento Estourado no Período!")
         else:
-            st.success("Dentro do Orçamento previsto")
+            st.success("✅ Operação dentro do orçamento previsto.")
 
     st.divider()
-    st.subheader("Comparativo: Orçado vs. Realizado por Conta")
+    st.markdown("### 📊 Orçado vs. Realizado por Conta")
     if not tab_contas.empty:
         df_barras = tab_contas.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
         fig_bar = px.bar(
             df_barras, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
-            title="Orçado vs Realizado por Conta", color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
+            title="Comparativo por Conta", color_discrete_map={"Orcado": "#93c5fd", "Realizado": "#0284c7"}
         )
-        fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45)
+        fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_bar, use_container_width=True)
 
 with aba3:
-    st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
+    st.markdown("### 🔍 Consulta Analítica de Lançamentos")
     try:
         event = st.dataframe(
             tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
@@ -246,7 +280,7 @@ with aba3:
             conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
             conta_nome_completo = linha_selecionada["Conta"]
             st.markdown("---")
-            st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
+            st.markdown(f"#### 🔎 Lançamentos da Conta: {conta_nome_completo}")
             if df_det is not None and not df_det.empty:
                 df_det_filtrado = df_det.copy()
                 if centro_sel != "Todos os centros":
@@ -264,66 +298,3 @@ with aba3:
                 st.warning("Ficheiro detalhes_longos.csv não disponível.")
     except Exception as e:
         st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
-
-with aba4:
-    st.subheader("🤖 Assistente IA de Custos (Google Gemini)")
-    st.markdown("Faça perguntas naturais sobre o orçamento (ex: *'Preciso de uma análise detalhada do centro 247'*, *'Quais as contas mais críticas?'*).")
-    
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-
-    if not api_key:
-        st.warning("⚠️ Chave da API do Gemini não encontrada nos segredos do Streamlit (`secrets.toml`).")
-    else:
-        try:
-            client = genai.Client(api_key=api_key)
-            
-            if "messages" not in st.session_state:
-                st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise dos custos?"}]
-
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-
-            if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("A consultar a inteligência do Gemini..."):
-                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                        
-                        detalhes_amostra = ""
-                        if df_det is not None and not df_det.empty:
-                            detalhes_amostra = df_det.head(100).to_csv(index=False)
-
-                        prompt_sistema = f"""
-Você é um controlador financeiro especialista altamente inteligente. Responda à pergunta do gestor baseando-se estritamente nestes dados:
-- Centro selecionado na tela: {centro_sel}
-- Mês selecionado na tela: {mes_sel}
-- Orçamento Global do Período: R$ {orc_anual:,.2f}
-- Realizado Global: R$ {real_anual:,.2f}
-- Saldo Global: R$ {saldo_anual:,.2f}
-
-Tabela Resumo de Contas:
-{resumo_contas_csv}
-
-Amostra de Lançamentos Analíticos Detalhados:
-{detalhes_amostra}
-
-Pergunta do Gestor: {prompt}
-"""
-                        # Utiliza o modelo genérico gemini-flash-latest recomendado para o novo SDK google-genai
-                        response = client.models.generate_content(
-                            model="gemini-flash-latest",
-                            contents=prompt_sistema
-                        )
-                        
-                        if response and response.text:
-                            resposta_ia = response.text
-                            st.markdown(resposta_ia)
-                            st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
-                        else:
-                            st.error("A IA não retornou conteúdo.")
-        except Exception as e:
-            st.error(f"Erro ao comunicar com a API do Gemini: {e}. Verifique se a chave em secrets.toml está correta e ativa.")
