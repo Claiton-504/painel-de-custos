@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Groq Llama 3.3)
-=======================================================================
+Dashboard de Custos 2026 — Streamlit (Painel Executivo de BI)
+===========================================================
 """
 
 from pathlib import Path
@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-from groq import Groq
 
 st.set_page_config(
     page_title="Custos 2026 | Painel do Gestor",
@@ -73,7 +72,7 @@ def carregar_dados():
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente com IA Groq (Llama 3.3)")
+st.caption("Dashboard Executivo de Business Intelligence")
 
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
@@ -153,11 +152,11 @@ def colorir(row):
         return ["background-color: #FFE082"] * len(row)
     return ["background-color: #C8E6C9"] * len(row)
 
-aba1, aba2, aba3, aba4 = st.tabs([
+# Apenas as 3 abas de BI essenciais (sem aba de assistente IA)
+aba1, aba2, aba3 = st.tabs([
     "📊 Visão Geral & KPIs", 
     "📈 Gráficos & Comparativo", 
-    "📋 Contas & Detalhe Analítico",
-    "🤖 Assistente IA (Groq / Llama 3.3)"
+    "📋 Contas & Detalhe Analítico"
 ])
 
 with aba1:
@@ -264,69 +263,3 @@ with aba3:
                 st.warning("Ficheiro detalhes_longos.csv não disponível.")
     except Exception as e:
         st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
-
-with aba4:
-    st.subheader("🤖 Assistente IA de Custos (Groq Llama 3.3)")
-    st.markdown("Faça perguntas naturais sobre o orçamento (ex: *'Qual o saldo do centro 247 entre os meses 1 e 3?'*, *'Quais as maiores despesas em aberto?'*).")
-    
-    groq_key = st.secrets.get("GROQ_API_KEY", None)
-
-    if not groq_key:
-        st.warning("⚠️ Chave da API do Groq não encontrada em `secrets.toml`. Por favor adicione `GROQ_API_KEY = 'gsk_...'`.")
-    else:
-        try:
-            client = Groq(api_key=groq_key)
-            
-            if "messages" not in st.session_state:
-                st.session_state.messages = [{"role": "assistant", "content": "Olá! Sou o seu assistente financeiro alimentado pelo Groq. Como posso ajudar?"}]
-
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-
-            if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
-                st.session_state.messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("A analisar os dados via Groq Llama 3.3..."):
-                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                        
-                        detalhes_amostra = ""
-                        if df_det is not None and not df_det.empty:
-                            detalhes_amostra = df_det.head(100).to_csv(index=False)
-
-                        prompt_sistema = f"""
-Você é um controlador financeiro especialista altamente experiente e analítico.
-Responda de forma clara, profissional e direta em português à pergunta do gestor, baseando-se nestes dados reais do sistema:
-
-[CONTEXTO ATUAL]
-- Centro Selecionado: {centro_sel}
-- Mês Selecionado: {mes_sel}
-- Orçamento Global: R$ {orc_anual:,.2f}
-- Realizado Global: R$ {real_anual:,.2f}
-- Saldo Global: R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
-
-[TABELA DE RESUMO DE CONTAS]
-{resumo_contas_csv}
-
-[AMOSTRA DE LANÇAMENTOS DETALHADOS]
-{detalhes_amostra}
-"""
-
-                        completion = client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=[
-                                {"role": "system", "content": prompt_sistema},
-                                {"role": "user", "content": prompt}
-                            ],
-                            temperature=0.2,
-                            max_tokens=1024,
-                        )
-                        
-                        resposta_ia = completion.choices[0].message.content
-                        st.markdown(resposta_ia)
-                        st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
-        except Exception as e:
-            st.error(f"Erro ao comunicar com a API do Groq: {e}")
