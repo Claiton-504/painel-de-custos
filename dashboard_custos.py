@@ -1,536 +1,332 @@
 # -*- coding: utf-8 -*-
 """
-Painel Gerencial de Custos 2026 — Streamlit
-==========================================
-Publicar: streamlit run dashboard_custos.py
-
-Arquivos na mesma pasta:
-  - dados_longos.csv          (obrigatório)
-  - base_calculada.csv        (opcional — resumo por centro)
-  - detalhes_longos.csv       (opcional — lançamentos analíticos)
+Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Groq Llama 3.3)
+=======================================================================
 """
 
 from pathlib import Path
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
+import io
+from groq import Groq
 
-# ═══════════════════════════════════════════════════════════
-# CONFIG
-# ═══════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Painel de Custos 2026",
+    page_title="Custos 2026 | Painel do Gestor",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",  # filtros sempre visíveis
 )
+
+st.markdown("""
+    <style>
+    .metric-card {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 BASE = Path(__file__).resolve().parent
 CSV_LONG = BASE / "dados_longos.csv"
 CSV_BASE = BASE / "base_calculada.csv"
-CSV_DET = BASE / "detalhes_longos.csv"
+CSV_DETALHES = BASE / "detalhes_longos.csv"
 
-# Cores
-AZUL = "#1e3a5f"
-AZUL_M = "#334155"
-VERDE = "#059669"
-VERDE_BG = "#ecfdf5"
-AMAR = "#d97706"
-AMAR_BG = "#fffbeb"
-VERM = "#dc2626"
-VERM_BG = "#fef2f2"
-CINZA = "#64748b"
-FUNDO = "#f8fafc"
-
-st.markdown(
-    f"""
-<style>
-    .main {{ background-color: {FUNDO}; }}
-    .block-container {{ padding-top: 1.2rem !important; max-width: 1200px !important; }}
-    [data-testid="stSidebar"] {{
-        background-color: #ffffff;
-        border-right: 1px solid #e2e8f0;
-    }}
-    .hdr-title {{
-        font-size: 1.6rem; font-weight: 700; color: {AZUL}; margin: 0;
-        letter-spacing: -0.02em;
-    }}
-    .hdr-sub {{
-        font-size: 0.9rem; color: {CINZA}; margin: 0.25rem 0 1.25rem 0;
-    }}
-    .kpi-grid {{
-        display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;
-        margin-bottom: 1.25rem;
-    }}
-    .kpi {{
-        background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
-        padding: 1.1rem 1.25rem; box-shadow: 0 1px 2px rgba(0,0,0,.04);
-    }}
-    .kpi-label {{
-        font-size: 0.7rem; font-weight: 600; color: {CINZA};
-        text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem;
-    }}
-    .kpi-val {{
-        font-size: 1.55rem; font-weight: 700; color: #0f172a; line-height: 1.15;
-    }}
-    .kpi-hint {{ font-size: 0.8rem; margin-top: 0.35rem; color: {CINZA}; }}
-    .alert-box {{
-        border-radius: 10px; padding: 0.85rem 1.1rem; margin-bottom: 1rem;
-        border: 1px solid; font-size: 0.9rem;
-    }}
-    .alert-crit {{ background: {VERM_BG}; border-color: #fecaca; color: #991b1b; }}
-    .alert-aten {{ background: {AMAR_BG}; border-color: #fde68a; color: #92400e; }}
-    .alert-ok {{ background: {VERDE_BG}; border-color: #a7f3d0; color: #065f46; }}
-    .sec-title {{
-        font-size: 1.05rem; font-weight: 600; color: {AZUL_M};
-        margin: 0.5rem 0 0.75rem 0;
-    }}
-    div[data-testid="stDataFrame"] {{ border-radius: 10px; overflow: hidden; }}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-
-# ═══════════════════════════════════════════════════════════
-# DADOS
-# ═══════════════════════════════════════════════════════════
 @st.cache_data
-def carregar():
-    if not CSV_LONG.exists():
+def carregar_dados():
+    try:
+        if not CSV_LONG.exists():
+            return None, None, None
+            
+        df = pd.read_csv(CSV_LONG)
+        df["Centro"] = df["Centro_Codigo"].astype(str) + " - " + df["Centro_Nome"].astype(str)
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+        df["Valor_Abs"] = df["Valor"].abs()
+        
+        base = None
+        if CSV_BASE.exists():
+            base = pd.read_csv(CSV_BASE)
+            if "Centro" not in base.columns and "Centro_Codigo" in base.columns:
+                base["Centro"] = base["Centro_Codigo"].astype(str) + " - " + base["Centro_Nome"].astype(str)
+                
+        df_det = None
+        if CSV_DETALHES.exists():
+            df_det = pd.read_csv(CSV_DETALHES)
+            df_det["Centro_Codigo"] = df_det["Centro_Codigo"].astype(str).str.strip()
+            df_det["Conta_Codigo"] = df_det["Conta_Codigo"].astype(str).str.strip()
+            
+            if "Conta_Nome" not in df_det.columns:
+                df_det["Conta_Nome"] = "Conta " + df_det["Conta_Codigo"]
+                
+            df_det["Conta_Completa"] = df_det["Conta_Codigo"] + " - " + df_det["Conta_Nome"].astype(str)
+            df_det["Valor"] = pd.to_numeric(df_det["Valor"], errors="coerce").fillna(0)
+            df_det["Mes_Trans"] = pd.to_numeric(df_det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
+            
+        return df, base, df_det
+    except Exception as e:
+        st.error(f"Erro ao carregar os dados: {e}")
         return None, None, None
-    df = pd.read_csv(CSV_LONG)
-    df["Centro_Codigo"] = df["Centro_Codigo"].astype(str).str.strip()
-    df["Centro_Nome"] = df["Centro_Nome"].astype(str).str.strip()
-    df["Centro"] = df["Centro_Codigo"] + " - " + df["Centro_Nome"]
-    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
-    df["Valor_Abs"] = df["Valor"].abs()
-    df["Mes"] = df["Mes"].astype(str)
 
-    base = None
-    if CSV_BASE.exists():
-        base = pd.read_csv(CSV_BASE)
-        if "Centro" not in base.columns and "Centro_Codigo" in base.columns:
-            base["Centro"] = (
-                base["Centro_Codigo"].astype(str) + " - " + base["Centro_Nome"].astype(str)
-            )
+df, base, df_det = carregar_dados()
 
-    det = None
-    if CSV_DET.exists():
-        det = pd.read_csv(CSV_DET)
-        det["Centro_Codigo"] = det["Centro_Codigo"].astype(str).str.strip()
-        det["Conta_Codigo"] = det["Conta_Codigo"].astype(str).str.strip()
-        det["Valor"] = pd.to_numeric(det["Valor"], errors="coerce").fillna(0)
-        if "Mes_Trans" in det.columns:
-            det["Mes_Trans"] = pd.to_numeric(det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
+st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
+st.caption("Dashboard Executivo Inteligente com IA Groq (Llama 3.3)")
 
-    return df, base, det
-
-
-df, base, det = carregar()
 if df is None:
-    st.error(
-        "**dados_longos.csv** não encontrado nesta pasta.\n\n"
-        "Rode o script de atualização mensal e publique o CSV junto com o app."
-    )
+    st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
     st.stop()
 
+# Filtros na barra lateral
+st.sidebar.header("Filtros Globais")
+centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
+centro_sel = st.sidebar.selectbox("Centro de custo", centros)
 
-# ═══════════════════════════════════════════════════════════
-# FILTROS (sidebar sempre aberta)
-# ═══════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("### Filtros")
-    st.caption("Escolha centro e período. Tudo na tela atualiza na hora.")
+meses_disponiveis = sorted(
+    [m for m in df["Mes"].astype(str).unique().tolist() if m != "Total" and str(m).isdigit()],
+    key=lambda x: int(x),
+)
+mes_sel = st.sidebar.selectbox("Mês", ["Todos os meses"] + meses_disponiveis)
 
-    centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
-    centro_sel = st.selectbox("Centro de custo", centros, index=0)
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "**Legenda de Status**\n\n"
+    "- 🟢 **OK** — dentro do previsto\n"
+    "- 🟡 **Atenção** — ≥ 80%\n"
+    "- 🔴 **Crítico** — estourou / saldo negativo"
+)
 
-    meses = sorted(
-        [m for m in df["Mes"].unique() if m != "Total" and str(m).isdigit()],
-        key=lambda x: int(x),
-    )
-    mes_sel = st.selectbox("Mês", ["Todos os meses"] + meses, index=0)
-
-    st.markdown("---")
-    st.markdown("**Status das contas**")
-    st.markdown(
-        f"""
-<span style="color:{VERDE}">●</span> **OK** — abaixo de 80%<br>
-<span style="color:{AMAR}">●</span> **Atenção** — 80% a 100%<br>
-<span style="color:{VERM}">●</span> **Crítico** — acima de 100% ou saldo negativo
-""",
-        unsafe_allow_html=True,
-    )
-    st.markdown("---")
-    st.caption("Cada centro é analisado isoladamente. Não compare estruturas diferentes entre si.")
-
-
-# ═══════════════════════════════════════════════════════════
-# CÁLCULOS
-# ═══════════════════════════════════════════════════════════
+# Filtrar dados principais
 d = df.copy()
 if centro_sel != "Todos os centros":
     d = d[d["Centro"] == centro_sel]
 
-# Totais do centro (linha Total)
-mask_tot = d["Conta_Codigo"] == "Total"
-d_prev_a = d[mask_tot & (d["Tipo"] == "Prev.") & (d["Mes"] == "Total")]
-d_real_a = d[mask_tot & (d["Tipo"] == "Real.") & (d["Mes"] == "Total")]
-orc_anual = float(d_prev_a["Valor_Abs"].sum())
-real_anual = float(d_real_a["Valor_Abs"].sum())
+d_prev_total = d[(d["Tipo"] == "Prev.") & (d["Mes"] == "Total") & (d["Conta_Codigo"] == "Total")]
+d_real_total = d[(d["Tipo"] == "Real.") & (d["Mes"] == "Total") & (d["Conta_Codigo"] == "Total")]
+
+orc_anual = float(d_prev_total["Valor_Abs"].sum())
+real_anual = float(d_real_total["Valor_Abs"].sum())
 saldo_anual = orc_anual - real_anual
-pct_anual = real_anual / orc_anual if orc_anual > 0 else 0.0
+pct_anual = (real_anual / orc_anual) if orc_anual > 0 else 0.0
 
-visao_mensal = mes_sel != "Todos os meses"
-if visao_mensal:
-    d_prev_m = d[mask_tot & (d["Tipo"] == "Prev.") & (d["Mes"] == mes_sel)]
-    d_real_m = d[mask_tot & (d["Tipo"] == "Real.") & (d["Mes"] == mes_sel)]
-    orc_ref = float(d_prev_m["Valor_Abs"].sum())
-    real_ref = float(d_real_m["Valor_Abs"].sum())
-    saldo_ref = orc_ref - real_ref
-    pct_ref = real_ref / orc_ref if orc_ref > 0 else 0.0
-    rotulo = f"Mês {mes_sel}"
+if mes_sel != "Todos os meses":
+    d_prev_mes = d[(d["Tipo"] == "Prev.") & (d["Mes"].astype(str) == mes_sel) & (d["Conta_Codigo"] == "Total")]
+    d_real_mes = d[(d["Tipo"] == "Real.") & (d["Mes"].astype(str) == mes_sel) & (d["Conta_Codigo"] == "Total")]
+    orc_mes = float(d_prev_mes["Valor_Abs"].sum())
+    real_mes = float(d_real_mes["Valor_Abs"].sum())
+    saldo_mes = orc_mes - real_mes
+    pct_mes = (real_mes / orc_mes) if orc_mes > 0 else 0.0
 else:
-    orc_ref, real_ref, saldo_ref, pct_ref = orc_anual, real_anual, saldo_anual, pct_anual
-    rotulo = "Anual"
+    orc_mes = real_mes = saldo_mes = pct_mes = None
 
-
-def status_conta(orc, real, saldo, pct):
-    if saldo < 0 or (orc == 0 and real > 0) or pct >= 1:
-        return "Crítico"
-    if pct >= 0.8:
-        return "Atenção"
-    return "OK"
-
-
-def montar_contas_por_centro(frame, mes):
-    """Tabela de contas de UM centro (nunca mistura centros)."""
-    c = frame[frame["Conta_Codigo"] != "Total"].copy()
-    if mes == "Todos os meses":
-        prev = (
-            c[(c["Tipo"] == "Prev.") & (c["Mes"] == "Total")]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum()
-            .rename(columns={"Valor_Abs": "Orcado"})
-        )
-        real = (
-            c[(c["Tipo"] == "Real.") & (c["Mes"] == "Total")]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum()
-            .rename(columns={"Valor_Abs": "Realizado"})
-        )
-    else:
-        prev = (
-            c[(c["Tipo"] == "Prev.") & (c["Mes"] == mes)]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum()
-            .rename(columns={"Valor_Abs": "Orcado"})
-        )
-        real = (
-            c[(c["Tipo"] == "Real.") & (c["Mes"] == mes)]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum()
-            .rename(columns={"Valor_Abs": "Realizado"})
-        )
-
-    t = prev.merge(real, on=["Conta_Codigo", "Conta_Descricao"], how="outer").fillna(0)
-    t["Saldo"] = t["Orcado"] - t["Realizado"]
-    t["Pct"] = t.apply(
-        lambda r: r["Realizado"] / r["Orcado"]
-        if r["Orcado"] > 0
-        else (1.0 if r["Realizado"] > 0 else 0.0),
-        axis=1,
-    )
-    t["Status"] = t.apply(
-        lambda r: status_conta(r["Orcado"], r["Realizado"], r["Saldo"], r["Pct"]), axis=1
-    )
-    # Esconde linhas sem movimento
-    t = t[~((t["Orcado"] == 0) & (t["Realizado"] == 0))]
-    t["Conta"] = t["Conta_Codigo"].astype(str).str.zfill(10) + " | " + t["Conta_Descricao"].astype(str)
-    # Críticos primeiro, depois atenção, depois maior realizado
-    ordem = {"Crítico": 0, "Atenção": 1, "OK": 2}
-    t["_ord"] = t["Status"].map(ordem)
-    t = t.sort_values(["_ord", "Realizado"], ascending=[True, False]).drop(columns="_ord")
-    return t
-
-
-def montar_resumo_centros(frame, mes):
-    """Uma linha por centro — visão consolidada sem misturar contas."""
-    rows = []
-    for centro in sorted(frame["Centro"].unique()):
-        sub = frame[frame["Centro"] == centro]
-        m_tot = sub["Conta_Codigo"] == "Total"
-        if mes == "Todos os meses":
-            orc = float(sub[m_tot & (sub["Tipo"] == "Prev.") & (sub["Mes"] == "Total")]["Valor_Abs"].sum())
-            real = float(sub[m_tot & (sub["Tipo"] == "Real.") & (sub["Mes"] == "Total")]["Valor_Abs"].sum())
-        else:
-            orc = float(sub[m_tot & (sub["Tipo"] == "Prev.") & (sub["Mes"] == mes)]["Valor_Abs"].sum())
-            real = float(sub[m_tot & (sub["Tipo"] == "Real.") & (sub["Mes"] == mes)]["Valor_Abs"].sum())
-        saldo = orc - real
-        pct = real / orc if orc > 0 else (1.0 if real > 0 else 0.0)
-        rows.append(
-            {
-                "Centro": centro,
-                "Orcado": orc,
-                "Realizado": real,
-                "Saldo": saldo,
-                "Pct": pct,
-                "Status": status_conta(orc, real, saldo, pct),
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-# ═══════════════════════════════════════════════════════════
-# CABEÇALHO
-# ═══════════════════════════════════════════════════════════
-st.markdown('<p class="hdr-title">Painel Gerencial de Custos · 2026</p>', unsafe_allow_html=True)
-filtro_txt = f"{centro_sel}  ·  {mes_sel}"
-st.markdown(
-    f'<p class="hdr-sub">Acompanhamento orçamentário por centro de custo. Filtro ativo: <b>{filtro_txt}</b></p>',
-    unsafe_allow_html=True,
-)
-
-
-# ═══════════════════════════════════════════════════════════
-# KPIs
-# ═══════════════════════════════════════════════════════════
-cor_saldo = VERDE if saldo_ref >= 0 else VERM
-txt_saldo = "Dentro do orçamento" if saldo_ref >= 0 else "Acima do orçamento"
-
-st.markdown(
-    f"""
-<div class="kpi-grid">
-  <div class="kpi">
-    <div class="kpi-label">Orçamento · {rotulo}</div>
-    <div class="kpi-val">R$ {orc_ref:,.2f}</div>
-    <div class="kpi-hint">Valor orçado no período</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">Realizado · {rotulo}</div>
-    <div class="kpi-val">R$ {real_ref:,.2f}</div>
-    <div class="kpi-hint">{pct_ref:.1%} do orçamento</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">Saldo · {rotulo}</div>
-    <div class="kpi-val" style="color:{cor_saldo}">R$ {saldo_ref:,.2f}</div>
-    <div class="kpi-hint" style="color:{cor_saldo}">{txt_saldo}</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-label">Consumo · {rotulo}</div>
-    <div class="kpi-val">{pct_ref:.1%}</div>
-    <div class="kpi-hint">Percentual utilizado</div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-# KPIs anuais de apoio quando visão é mensal
-if visao_mensal and centro_sel != "Todos os centros":
-    with st.expander(f"Referência anual do centro (até o acumulado disponível)", expanded=False):
-        a1, a2, a3, a4 = st.columns(4)
-        a1.metric("Orçamento anual", f"R$ {orc_anual:,.2f}")
-        a2.metric("Realizado acum.", f"R$ {real_anual:,.2f}")
-        a3.metric("Saldo anual", f"R$ {saldo_anual:,.2f}")
-        a4.metric("% anual", f"{pct_anual:.1%}")
-
-
-# ═══════════════════════════════════════════════════════════
-# ALERTAS
-# ═══════════════════════════════════════════════════════════
-if centro_sel == "Todos os centros":
-    resumo = montar_resumo_centros(df, mes_sel)
-    n_crit = int((resumo["Status"] == "Crítico").sum())
-    n_aten = int((resumo["Status"] == "Atenção").sum())
-    if n_crit:
-        st.markdown(
-            f'<div class="alert-box alert-crit"><b>{n_crit} centro(s) em situação crítica</b> no filtro atual. '
-            f"Selecione o centro na barra lateral para ver as contas.</div>",
-            unsafe_allow_html=True,
-        )
-    elif n_aten:
-        st.markdown(
-            f'<div class="alert-box alert-aten"><b>{n_aten} centro(s) em atenção</b> (≥ 80% consumido).</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<div class="alert-box alert-ok">Nenhum centro crítico no filtro atual.</div>',
-            unsafe_allow_html=True,
-        )
+contas = d[d["Conta_Codigo"] != "Total"].copy()
+if mes_sel == "Todos os meses":
+    prev = contas[(contas["Tipo"] == "Prev.") & (contas["Mes"] == "Total")].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Orcado"})
+    real = contas[(contas["Tipo"] == "Real.") & (contas["Mes"] == "Total")].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Realizado"})
 else:
-    tab = montar_contas_por_centro(d, mes_sel)
-    n_crit = int((tab["Status"] == "Crítico").sum())
-    n_aten = int((tab["Status"] == "Atenção").sum())
-    if n_crit:
-        top = tab[tab["Status"] == "Crítico"].head(3)["Conta"].tolist()
-        nomes = "; ".join(top)
-        st.markdown(
-            f'<div class="alert-box alert-crit"><b>{n_crit} conta(s) crítica(s)</b>'
-            f"{' — ex.: ' + nomes if top else ''}.</div>",
-            unsafe_allow_html=True,
-        )
-    elif n_aten:
-        st.markdown(
-            f'<div class="alert-box alert-aten"><b>{n_aten} conta(s) em atenção</b> (≥ 80%).</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<div class="alert-box alert-ok">Nenhuma conta crítica neste centro/período.</div>',
-            unsafe_allow_html=True,
-        )
+    prev = contas[(contas["Tipo"] == "Prev.") & (contas["Mes"].astype(str) == mes_sel)].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Orcado"})
+    real = contas[(contas["Tipo"] == "Real.") & (contas["Mes"].astype(str) == mes_sel)].groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"].sum().rename(columns={"Valor_Abs": "Realizado"})
 
+tab_contas = prev.merge(real, on=["Conta_Codigo", "Conta_Descricao"], how="outer").fillna(0)
+tab_contas["Saldo"] = tab_contas["Orcado"] - tab_contas["Realizado"]
+tab_contas["% Consumido"] = tab_contas.apply(lambda r: r["Realizado"] / r["Orcado"] if r["Orcado"] > 0 else (1.0 if r["Realizado"] > 0 else 0.0), axis=1)
 
-# ═══════════════════════════════════════════════════════════
-# GRÁFICO + TABELA
-# ═══════════════════════════════════════════════════════════
-col_g, col_t = st.columns([2, 3], gap="large")
+def status_row(r):
+    if r["Saldo"] < 0 or (r["Orcado"] == 0 and r["Realizado"] > 0) or r["% Consumido"] >= 1:
+        return "🔴 Crítico"
+    if r["% Consumido"] >= 0.8:
+        return "🟡 Atenção"
+    return "🟢 OK"
 
-with col_g:
-    st.markdown(f'<p class="sec-title">Composição do orçamento · {rotulo}</p>', unsafe_allow_html=True)
-    gasto = real_ref
-    disponivel = max(0.0, saldo_ref)
-    estouro = max(0.0, -saldo_ref)
-    pie = pd.DataFrame(
-        {"Fatia": ["Realizado", "Disponível", "Estouro"], "Valor": [gasto, disponivel, estouro]}
+tab_contas["Status"] = tab_contas.apply(status_row, axis=1)
+tab_contas["Conta_Codigo_Fmt"] = tab_contas["Conta_Codigo"].astype(str).str.zfill(10)
+tab_contas["Conta"] = tab_contas["Conta_Codigo_Fmt"] + " | " + tab_contas["Conta_Descricao"].astype(str)
+tab_contas = tab_contas.sort_values("Realizado", ascending=False)
+tab_show = tab_contas[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status", "Conta_Codigo"]]
+
+def colorir(row):
+    if "Crítico" in row["Status"]:
+        return ["background-color: #EF9A9A"] * len(row)
+    if "Atenção" in row["Status"]:
+        return ["background-color: #FFE082"] * len(row)
+    return ["background-color: #C8E6C9"] * len(row)
+
+aba1, aba2, aba3, aba4 = st.tabs([
+    "📊 Visão Geral & KPIs", 
+    "📈 Gráficos & Comparativo", 
+    "📋 Contas & Detalhe Analítico",
+    "🤖 Assistente IA (Groq / Llama 3.3)"
+])
+
+with aba1:
+    st.subheader("Indicadores Principais")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Orçamento anual", f"R$ {orc_anual:,.2f}")
+    c2.metric("Realizado acumulado", f"R$ {real_anual:,.2f}")
+    c3.metric("Saldo atual", f"R$ {saldo_anual:,.2f}")
+    c4.metric("Orçamento consumido", f"{pct_anual:.1%}")
+
+    if mes_sel != "Todos os meses":
+        st.markdown(f"**Desempenho no Mês {mes_sel}**")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Orçado no mês", f"R$ {orc_mes:,.2f}")
+        m2.metric("Realizado no mês", f"R$ {real_mes:,.2f}")
+        m3.metric("Saldo do mês", f"R$ {saldo_mes:,.2f}")
+        m4.metric("% gasto no mês", f"{pct_mes:.1%}")
+        
+    st.divider()
+    st.subheader("Resumo Executivo das Contas")
+    st.dataframe(
+        tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
+            {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
+        ),
+        use_container_width=True,
+        height=350,
     )
-    pie = pie[pie["Valor"] > 0]
-    if pie.empty:
-        st.info("Sem valores para o gráfico neste filtro.")
-    else:
-        fig = go.Figure(
-            data=[
-                go.Pie(
-                    labels=pie["Fatia"],
-                    values=pie["Valor"],
-                    hole=0.55,
-                    marker_colors=[
-                        AZUL_M if f == "Realizado" else VERDE if f == "Disponível" else VERM
-                        for f in pie["Fatia"]
-                    ],
-                    textinfo="percent",
-                    textposition="inside",
-                    hovertemplate="%{label}<br>R$ %{value:,.2f}<extra></extra>",
-                )
-            ]
-        )
-        fig.update_layout(
-            margin=dict(t=10, b=10, l=10, r=10),
-            height=300,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            showlegend=True,
-            legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center"),
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-with col_t:
-    if centro_sel == "Todos os centros":
-        st.markdown(
-            f'<p class="sec-title">Resumo por centro de custo · {rotulo}</p>',
-            unsafe_allow_html=True,
-        )
-        st.caption("Visão consolidada: um centro por linha. Selecione um centro para ver as contas.")
-        resumo = montar_resumo_centros(df, mes_sel)
-        ordem = {"Crítico": 0, "Atenção": 1, "OK": 2}
-        resumo["_o"] = resumo["Status"].map(ordem)
-        resumo = resumo.sort_values(["_o", "Realizado"], ascending=[True, False]).drop(columns="_o")
-
-        def cor_res(row):
-            if row["Status"] == "Crítico":
-                return [f"background-color: {VERM_BG}; color: #991b1b"] * len(row)
-            if row["Status"] == "Atenção":
-                return [f"background-color: {AMAR_BG}; color: #92400e"] * len(row)
-            return [f"background-color: {VERDE_BG}; color: #065f46"] * len(row)
-
-        show = resumo.rename(columns={"Pct": "% Consumido"})[
-            ["Centro", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]
-        ]
-        st.dataframe(
-            show.style.apply(cor_res, axis=1).format(
-                {
-                    "Orcado": "R$ {:,.2f}",
-                    "Realizado": "R$ {:,.2f}",
-                    "Saldo": "R$ {:,.2f}",
-                    "% Consumido": "{:.1%}",
-                }
-            ),
-            use_container_width=True,
-            height=340,
-            hide_index=True,
-        )
-    else:
-        st.markdown(
-            f'<p class="sec-title">Contas · {centro_sel.split(" - ")[0]} · {rotulo}</p>',
-            unsafe_allow_html=True,
-        )
-        tab = montar_contas_por_centro(d, mes_sel)
-
-        def cor_tab(row):
-            if row["Status"] == "Crítico":
-                return [f"background-color: {VERM_BG}; color: #991b1b"] * len(row)
-            if row["Status"] == "Atenção":
-                return [f"background-color: {AMAR_BG}; color: #92400e"] * len(row)
-            return [f"background-color: {VERDE_BG}; color: #065f46"] * len(row)
-
-        show = tab.rename(columns={"Pct": "% Consumido"})[
-            ["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]
-        ]
-        st.dataframe(
-            show.style.apply(cor_tab, axis=1).format(
-                {
-                    "Orcado": "R$ {:,.2f}",
-                    "Realizado": "R$ {:,.2f}",
-                    "Saldo": "R$ {:,.2f}",
-                    "% Consumido": "{:.1%}",
-                }
-            ),
-            use_container_width=True,
-            height=340,
-            hide_index=True,
-        )
-
-
-# ═══════════════════════════════════════════════════════════
-# DETALHE DE LANÇAMENTOS (se houver detalhes_longos.csv)
-# ═══════════════════════════════════════════════════════════
-if centro_sel != "Todos os centros" and det is not None and not det.empty:
-    st.markdown("---")
-    st.markdown('<p class="sec-title">Lançamentos analíticos</p>', unsafe_allow_html=True)
-    st.caption("Opcional: escolha uma conta para ver documentos/itens (quando o arquivo de detalhes existir).")
-
-    tab = montar_contas_por_centro(d, mes_sel)
-    opcoes = ["—"] + tab["Conta"].tolist()
-    conta_sel = st.selectbox("Conta", opcoes, index=0)
-
-    if conta_sel != "—":
-        cod = conta_sel.split(" | ")[0].lstrip("0")
-        c_codigo = centro_sel.split(" - ")[0].strip()
-        det_f = det[det["Centro_Codigo"] == c_codigo].copy()
-        det_f = det_f[det_f["Conta_Codigo"].astype(str).str.lstrip("0") == cod]
-        if visao_mensal and "Mes_Trans" in det_f.columns:
-            det_f = det_f[det_f["Mes_Trans"] == int(mes_sel)]
-        cols = [c for c in ["DOC", "Data", "Clifor", "Item", "Valor"] if c in det_f.columns]
-        if det_f.empty or not cols:
-            st.info("Nenhum lançamento encontrado para esta conta com os filtros atuais.")
+with aba2:
+    st.subheader("Análise Gráfica de Consumo")
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        if mes_sel == "Todos os meses":
+            gasto, disponivel, estouro = real_anual, max(0.0, saldo_anual), max(0.0, -saldo_anual)
+            titulo = "Anual"
         else:
-            st.dataframe(
-                det_f[cols].sort_values("Valor", ascending=False).style.format({"Valor": "R$ {:,.2f}"}),
-                use_container_width=True,
-                height=280,
-                hide_index=True,
+            gasto, disponivel, estouro = real_mes, max(0.0, saldo_mes), max(0.0, -saldo_mes)
+            titulo = f"Mês {mes_sel}"
+            
+        pie_df = pd.DataFrame(
+            {"Fatia": ["Realizado (gasto)", "Disponível (saldo)", "Estouro"], "Valor": [gasto, disponivel, estouro]}
+        )
+        pie_df = pie_df[pie_df["Valor"] > 0]
+        if not pie_df.empty:
+            fig_pie = px.pie(
+                pie_df, names="Fatia", values="Valor", title=f"Distribuição do Orçamento — {titulo}",
+                color="Fatia", color_discrete_map={"Realizado (gasto)": "#2874A6", "Disponível (saldo)": "#1E8449", "Estouro": "#922B21"}
             )
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            st.plotly_chart(fig_pie, use_container_width=True)
 
+    with col_g2:
+        st.markdown(f"**Indicadores do Período ({titulo})**")
+        st.write(f"- Realizado: **R$ {gasto:,.2f}**")
+        st.write(f"- Disponível: **R$ {disponivel:,.2f}**")
+        if estouro > 0:
+            st.write(f"- Estouro: **R$ {estouro:,.2f}**")
+            st.error("Orçamento Estourado!")
+        else:
+            st.success("Dentro do Orçamento previsto")
 
-# ═══════════════════════════════════════════════════════════
-# RODAPÉ
-# ═══════════════════════════════════════════════════════════
-st.markdown("---")
-st.caption(
-    "Painel Gerencial de Custos 2026 · Dados a partir dos relatórios mensais de centro de custo. "
-    "Atualize o CSV no repositório para refrescar este painel."
-)
+    st.divider()
+    st.subheader("Comparativo: Orçado vs. Realizado por Conta")
+    if not tab_contas.empty:
+        df_barras = tab_contas.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
+        fig_bar = px.bar(
+            df_barras, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
+            title="Orçado vs Realizado por Conta", color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
+        )
+        fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+with aba3:
+    st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
+    try:
+        event = st.dataframe(
+            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
+                {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
+            ),
+            use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
+        )
+        
+        selected_rows = getattr(event, "selection", {}).get("rows", [])
+        if selected_rows:
+            linha_selecionada = tab_show.iloc[selected_rows[0]]
+            conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
+            conta_nome_completo = linha_selecionada["Conta"]
+            st.markdown("---")
+            st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
+            if df_det is not None and not df_det.empty:
+                df_det_filtrado = df_det.copy()
+                if centro_sel != "Todos os centros":
+                    c_codigo = centro_sel.split(" - ")[0].strip()
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
+                df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
+                if mes_sel != "Todos os meses":
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
+                if not df_det_filtrado.empty:
+                    cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
+                    st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
+                else:
+                    st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
+            else:
+                st.warning("Ficheiro detalhes_longos.csv não disponível.")
+    except Exception as e:
+        st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
+
+with aba4:
+    st.subheader("🤖 Assistente IA de Custos (Groq Llama 3.3)")
+    st.markdown("Faça perguntas naturais sobre o orçamento (ex: *'Qual o saldo do centro 247 entre os meses 1 e 3?'*, *'Quais as maiores despesas em aberto?'*).")
+    
+    groq_key = st.secrets.get("GROQ_API_KEY", None)
+
+    if not groq_key:
+        st.warning("⚠️ Chave da API do Groq não encontrada em `secrets.toml`. Por favor adicione `GROQ_API_KEY = 'gsk_...'`.")
+    else:
+        try:
+            client = Groq(api_key=groq_key)
+            
+            if "messages" not in st.session_state:
+                st.session_state.messages = [{"role": "assistant", "content": "Olá! Sou o seu assistente financeiro alimentado pelo Groq. Como posso ajudar?"}]
+
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+            if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("A analisar os dados via Groq Llama 3.3..."):
+                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                        
+                        detalhes_amostra = ""
+                        if df_det is not None and not df_det.empty:
+                            detalhes_amostra = df_det.head(100).to_csv(index=False)
+
+                        prompt_sistema = f"""
+Você é um controlador financeiro especialista altamente experiente e analítico.
+Responda de forma clara, profissional e direta em português à pergunta do gestor, baseando-se nestes dados reais do sistema:
+
+[CONTEXTO ATUAL]
+- Centro Selecionado: {centro_sel}
+- Mês Selecionado: {mes_sel}
+- Orçamento Global: R$ {orc_anual:,.2f}
+- Realizado Global: R$ {real_anual:,.2f}
+- Saldo Global: R$ {saldo_anual:,.2f} ({pct_anual:.1%} consumido)
+
+[TABELA DE RESUMO DE CONTAS]
+{resumo_contas_csv}
+
+[AMOSTRA DE LANÇAMENTOS DETALHADOS]
+{detalhes_amostra}
+"""
+
+                        completion = client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
+                            messages=[
+                                {"role": "system", "content": prompt_sistema},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.2,
+                            max_tokens=1024,
+                        )
+                        
+                        resposta_ia = completion.choices[0].message.content
+                        st.markdown(resposta_ia)
+                        st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+        except Exception as e:
+            st.error(f"Erro ao comunicar com a API do Groq: {e}")
