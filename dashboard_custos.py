@@ -277,4 +277,52 @@ with aba4:
         try:
             client = genai.Client(api_key=api_key)
             
-            if "messages"
+            if "messages" not in st.session_state:
+                st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise dos custos?"}]
+
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+            if prompt := st.chat_input("Faça uma pergunta sobre o orçamento..."):
+                st.session_state.messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("A consultar a inteligência do Gemini..."):
+                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                        
+                        detalhes_amostra = ""
+                        if df_det is not None and not df_det.empty:
+                            detalhes_amostra = df_det.head(100).to_csv(index=False)
+
+                        prompt_sistema = f"""
+Você é um controlador financeiro especialista altamente inteligente. Responda à pergunta do gestor baseando-se estritamente nestes dados:
+- Centro selecionado na tela: {centro_sel}
+- Mês selecionado na tela: {mes_sel}
+- Orçamento Global do Período: R$ {orc_anual:,.2f}
+- Realizado Global: R$ {real_anual:,.2f}
+- Saldo Global: R$ {saldo_anual:,.2f}
+
+Tabela Resumo de Contas:
+{resumo_contas_csv}
+
+Amostra de Lançamentos Analíticos Detalhados:
+{detalhes_amostra}
+
+Pergunta do Gestor: {prompt}
+"""
+                        response = client.models.generate_content(
+                            model="gemini-1.5-flash",
+                            contents=prompt_sistema
+                        )
+                        
+                        if response and response.text:
+                            resposta_ia = response.text
+                            st.markdown(resposta_ia)
+                            st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+                        else:
+                            st.error("A IA não retornou conteúdo.")
+        except Exception as e:
+            st.error(f"Erro ao comunicar com a API do Gemini: {e}. Verifique se a chave em secrets.toml está correta e ativa.")
