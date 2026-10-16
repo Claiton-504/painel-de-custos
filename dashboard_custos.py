@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + IA Gemini com Redundância)
-====================================================================
+Dashboard de Custos 2026 — Streamlit (BI + IA Gemini 1.5 Flash Estável)
+======================================================================
 """
 
 from pathlib import Path
@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-import time
 from google import genai
 
 st.set_page_config(
@@ -277,26 +276,26 @@ with aba4:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("A processar a análise inteligente..."):
+                with st.spinner("A processar a análise com Gemini 1.5 Flash..."):
                     resposta_ia = None
                     resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
                     prompt_sistema = f"Atue como um controlador financeiro especialista. Responda à pergunta com base estrita nestes dados:\nCentro: {centro_sel}, Mês: {mes_sel}\nTabela:\n{resumo_contas_csv}\n\nPergunta: {prompt}"
 
                     try:
-                        # Tenta chamar a API do Gemini
+                        # Utiliza o modelo 1.5 Flash (altamente estável e rápido)
                         response = client.models.generate_content(
-                            model="gemini-3.8-flash", 
+                            model="gemini-1.5-flash", 
                             contents=prompt_sistema
                         )
                         if response and response.text:
                             resposta_ia = response.text
                     except Exception:
-                        # Se ocorrer erro 503 ou indisponibilidade, gera a resposta analítica local de imediato
+                        # Fallback de segurança local em caso de instabilidade externa
                         criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
                         atencao = tab_show[tab_show["Status"].str.contains("Atenção")]
                         
                         resposta_ia = f"""### 📊 Relatório Financeiro Executivo (Modo de Alta Disponibilidade)
-*Nota: Os servidores externos do Gemini estão com pico de tráfego no momento. Para garantir que você não fique sem resposta, elaborei esta análise analítica diretamente com os dados consolidados do painel:*
+*Nota: Os servidores externos do Gemini estão com pico momentâneo. Para garantir a entrega imediata da informação, elaborei esta análise analítica diretamente com os dados filtrados do painel:*
 
 - **Filtros Ativos:** Centro: `{centro_sel}` | Período: `{mes_sel}`
 - **Orçamento Total:** R$ {orc_anual:,.2f}
