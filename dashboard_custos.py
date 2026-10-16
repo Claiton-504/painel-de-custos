@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Gemini Real)
-===================================================================
+Dashboard de Custos 2026 — Streamlit (BI + Assistente IA Gemini Atualizado)
+========================================================================
 """
 
 from pathlib import Path
@@ -313,8 +313,9 @@ Amostra de Lançamentos Analíticos Detalhados:
 
 Pergunta do Gestor: {prompt}
 """
+                        # Utiliza o modelo genérico gemini-flash-latest recomendado para o novo SDK google-genai
                         response = client.models.generate_content(
-                            model="gemini-1.5-flash",
+                            model="gemini-flash-latest",
                             contents=prompt_sistema
                         )
                         
