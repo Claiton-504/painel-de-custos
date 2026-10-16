@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + Assistente Analítico Inteligente)
-==========================================================================
+Dashboard de Custos 2026 — Streamlit (Painel Executivo Robusto)
+==============================================================
 """
 
 from pathlib import Path
@@ -37,42 +37,46 @@ CSV_DETALHES = BASE / "detalhes_longos.csv"
 
 @st.cache_data
 def carregar_dados():
-    if not CSV_LONG.exists():
+    try:
+        if not CSV_LONG.exists():
+            return None, None, None
+            
+        df = pd.read_csv(CSV_LONG)
+        df["Centro"] = df["Centro_Codigo"].astype(str) + " - " + df["Centro_Nome"].astype(str)
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
+        df["Valor_Abs"] = df["Valor"].abs()
+        
+        base = None
+        if CSV_BASE.exists():
+            base = pd.read_csv(CSV_BASE)
+            if "Centro" not in base.columns and "Centro_Codigo" in base.columns:
+                base["Centro"] = base["Centro_Codigo"].astype(str) + " - " + base["Centro_Nome"].astype(str)
+                
+        df_det = None
+        if CSV_DETALHES.exists():
+            df_det = pd.read_csv(CSV_DETALHES)
+            df_det["Centro_Codigo"] = df_det["Centro_Codigo"].astype(str).str.strip()
+            df_det["Conta_Codigo"] = df_det["Conta_Codigo"].astype(str).str.strip()
+            
+            if "Conta_Nome" not in df_det.columns:
+                df_det["Conta_Nome"] = "Conta " + df_det["Conta_Codigo"]
+                
+            df_det["Conta_Completa"] = df_det["Conta_Codigo"] + " - " + df_det["Conta_Nome"].astype(str)
+            df_det["Valor"] = pd.to_numeric(df_det["Valor"], errors="coerce").fillna(0)
+            df_det["Mes_Trans"] = pd.to_numeric(df_det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
+            
+        return df, base, df_det
+    except Exception as e:
+        st.error(f"Erro ao carregar os dados: {e}")
         return None, None, None
-        
-    df = pd.read_csv(CSV_LONG)
-    df["Centro"] = df["Centro_Codigo"].astype(str) + " - " + df["Centro_Nome"].astype(str)
-    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
-    df["Valor_Abs"] = df["Valor"].abs()
-    
-    base = None
-    if CSV_BASE.exists():
-        base = pd.read_csv(CSV_BASE)
-        if "Centro" not in base.columns and "Centro_Codigo" in base.columns:
-            base["Centro"] = base["Centro_Codigo"].astype(str) + " - " + base["Centro_Nome"].astype(str)
-            
-    df_det = None
-    if CSV_DETALHES.exists():
-        df_det = pd.read_csv(CSV_DETALHES)
-        df_det["Centro_Codigo"] = df_det["Centro_Codigo"].astype(str).str.strip()
-        df_det["Conta_Codigo"] = df_det["Conta_Codigo"].astype(str).str.strip()
-        
-        if "Conta_Nome" not in df_det.columns:
-            df_det["Conta_Nome"] = "Conta " + df_det["Conta_Codigo"]
-            
-        df_det["Conta_Completa"] = df_det["Conta_Codigo"] + " - " + df_det["Conta_Nome"].astype(str)
-        df_det["Valor"] = pd.to_numeric(df_det["Valor"], errors="coerce").fillna(0)
-        df_det["Mes_Trans"] = pd.to_numeric(df_det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
-        
-    return df, base, df_det
 
 df, base, df_det = carregar_dados()
 
 st.title("CUSTOS 2026  |  PAINEL DO GESTOR")
-st.caption("Dashboard Executivo Inteligente com Assistente Analítico")
+st.caption("Dashboard Executivo Inteligente")
 
 if df is None:
-    st.error("Arquivo dados_longos.csv não encontrado.")
+    st.error("Arquivo dados_longos.csv não encontrado ou inválido na pasta do projeto.")
     st.stop()
 
 # Filtros na barra lateral
@@ -207,3 +211,115 @@ with aba2:
 
     with col_g2:
         st.markdown(f"**Indicadores do Período ({titulo})**")
+        st.write(f"- Realizado: **R$ {gasto:,.2f}**")
+        st.write(f"- Disponível: **R$ {disponivel:,.2f}**")
+        if estouro > 0:
+            st.write(f"- Estouro: **R$ {estouro:,.2f}**")
+            st.error("Orçamento Estourado!")
+        else:
+            st.success("Dentro do Orçamento previsto")
+
+    st.divider()
+    st.subheader("Comparativo: Orçado vs. Realizado por Conta")
+    if not tab_contas.empty:
+        df_barras = tab_contas.melt(id_vars=["Conta_Descricao"], value_vars=["Orcado", "Realizado"], var_name="Tipo", value_name="Valor")
+        fig_bar = px.bar(
+            df_barras, x="Conta_Descricao", y="Valor", color="Tipo", barmode="group",
+            title="Orçado vs Realizado por Conta", color_discrete_map={"Orcado": "#AED6F1", "Realizado": "#2874A6"}
+        )
+        fig_bar.update_layout(xaxis_title="Conta", yaxis_title="Valor (R$)", xaxis_tickangle=-45)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+with aba3:
+    st.subheader("Detalhamento por Conta e Lançamentos Analíticos")
+    try:
+        event = st.dataframe(
+            tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].style.apply(colorir, axis=1).format(
+                {"Orcado": "R$ {:,.2f}", "Realizado": "R$ {:,.2f}", "Saldo": "R$ {:,.2f}", "% Consumido": "{:.1%}"}
+            ),
+            use_container_width=True, height=380, selection_mode="single-row", on_select="rerun", key="tabela_contas_aba3"
+        )
+        
+        selected_rows = getattr(event, "selection", {}).get("rows", [])
+        if selected_rows:
+            linha_selecionada = tab_show.iloc[selected_rows[0]]
+            conta_codigo_clicada = str(linha_selecionada["Conta_Codigo"]).strip().lstrip('0')
+            conta_nome_completo = linha_selecionada["Conta"]
+            st.markdown("---")
+            st.subheader(f"🔍 Detalhe Analítico: {conta_nome_completo}")
+            if df_det is not None and not df_det.empty:
+                df_det_filtrado = df_det.copy()
+                if centro_sel != "Todos os centros":
+                    c_codigo = centro_sel.split(" - ")[0].strip()
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Centro_Codigo"] == c_codigo]
+                df_det_filtrado = df_det_filtrado[df_det_filtrado["Conta_Codigo"].astype(str).str.lstrip('0') == conta_codigo_clicada]
+                if mes_sel != "Todos os meses":
+                    df_det_filtrado = df_det_filtrado[df_det_filtrado["Mes_Trans"] == int(mes_sel)]
+                if not df_det_filtrado.empty:
+                    cols_mostrar = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in df_det_filtrado.columns]
+                    st.dataframe(df_det_filtrado[cols_mostrar].style.format({"Valor": "R$ {:,.2f}"}), use_container_width=True, height=400)
+                else:
+                    st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
+            else:
+                st.warning("Ficheiro detalhes_longos.csv não disponível.")
+    except Exception as e:
+        st.info("Selecione uma linha na tabela acima para visualizar os lançamentos analíticos detalhados.")
+
+with aba4:
+    st.subheader("🤖 Assistente Analítico Inteligente")
+    st.markdown("Faça perguntas detalhadas (ex: *'Qual o realizado do centro 247 entre o mês 1 e 3?'*, *'Quais as contas críticas?'*).")
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise analítica dos custos?"}]
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("Faça uma pergunta detalhada sobre o orçamento..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("A processar cálculo analítico..."):
+                resposta_ia = ""
+                try:
+                    p_lower = prompt.lower()
+                    if any(term in p_lower for term in ["calcul", "mes", "mês", "centro", "entre", "247"]):
+                        df_analise = df_det.copy() if df_det is not None else pd.DataFrame()
+                        import re
+                        nums_encontrados = re.findall(r'\d+', p_lower)
+                        
+                        if not df_analise.empty and nums_encontrados:
+                            meses_possiveis = [int(n) for n in nums_encontrados if int(n) <= 12]
+                            if "mes" in p_lower or "mês" in p_lower:
+                                if len(meses_possiveis) >= 2:
+                                    m_min, m_max = min(meses_possiveis[:2]), max(meses_possiveis[:2])
+                                    df_analise = df_analise[(df_analise["Mes_Trans"] >= m_min) & (df_analise["Mes_Trans"] <= m_max)]
+                                elif len(meses_possiveis) == 1:
+                                    df_analise = df_analise[df_analise["Mes_Trans"] == meses_possiveis[0]]
+                            
+                            centros_possiveis = [n for n in nums_encontrados if int(n) > 12 or len(n) >= 3]
+                            if centros_possiveis:
+                                c_alvo = centros_possiveis[0]
+                                df_analise = df_analise[df_analise["Centro_Codigo"].astype(str).str.contains(c_alvo)]
+
+                        if not df_analise.empty:
+                            total_calculado = df_analise["Valor"].sum()
+                            qtd_lancamentos = len(df_analise)
+                            resposta_ia = f"""### 📊 Resultado do Cálculo Analítico
+- **Consulta:** `{prompt}`
+- **Valor Total Calculado:** **R$ {total_calculado:,.2f}**
+- **Total de Lançamentos Encontrados:** {qtd_lancamentos} registos analíticos.
+
+*Principais contas movimentadas:*
+"""
+                            top_contas = df_analise.groupby("Conta_Codigo")["Valor"].sum().reset_index().sort_values(by="Valor", ascending=False).head(5)
+                            for _, row in top_contas.iterrows():
+                                resposta_ia += f"- Conta `{row['Conta_Codigo']}`: R$ {row['Valor']:,.2f}\n"
+                        else:
+                            resposta_ia = "Não encontrei lançamentos detalhados suficientes para os critérios exatos solicitados na base analítica."
+                    else:
+                        criticas = tab_show[tab_show["Status"].str.contains("Crítico")]
+                        resposta_ia = f"""### 📋 Res
