@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Dashboard de Custos 2026 — Streamlit (BI + IA Gemini Alta Disponibilidade)
-========================================================================
+Dashboard de Custos 2026 — Streamlit (BI + IA Gemini Atualizada)
+==============================================================
 """
 
 from pathlib import Path
@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import io
-import time
 from google import genai
 
 st.set_page_config(
@@ -114,7 +113,7 @@ if mes_sel != "Todos os meses":
     orc_mes = float(d_prev_mes["Valor_Abs"].sum())
     real_mes = float(d_real_mes["Valor_Abs"].sum())
     saldo_mes = orc_mes - real_mes
-    pct_mes = (real_mes / orc_mes) if oracle_mes > 0 else 0.0 # type: ignore
+    pct_mes = (real_mes / orc_mes) if orc_mes > 0 else 0.0
 else:
     orc_mes = real_mes = saldo_mes = pct_mes = None
 
@@ -207,7 +206,7 @@ with aba2:
             st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_g2:
-        st.markdown(f"**Indicadores do Período ({titulo})**")
+        st.markdown(f"**Indicadores do Periodo ({titulo})**")
         st.write(f"- Realizado: **R$ {gasto:,.2f}**")
         st.write(f"- Disponível: **R$ {disponivel:,.2f}**")
         if estouro > 0:
@@ -264,7 +263,6 @@ with aba4:
     else:
         client = genai.Client(api_key=api_key)
         
-        # Inicializar ou limpar histórico se necessário
         if "messages" not in st.session_state:
             st.session_state.messages = [{"role": "assistant", "content": "Olá! Como posso ajudar na análise dos custos?"}]
 
@@ -278,29 +276,23 @@ with aba4:
                 st.markdown(prompt)
 
             with st.chat_message("assistant"):
-                with st.spinner("A consultar a inteligência do Gemini..."):
-                    resposta_ia = None
-                    # Usar os modelos mais estáveis disponíveis no SDK moderno
-                    modelos_para_tentar = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-flash"]
-                    
-                    resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
-                    prompt_sistema = f"Atue como um controlador financeiro especialista. Responda à pergunta com base estrita nestes dados:\nCentro: {centro_sel}, Mês: {mes_sel}\nTabela:\n{resumo_contas_csv}\n\nPergunta: {prompt}"
+                with st.spinner("A consultar o Gemini (Modelo 3.8 Flash)..."):
+                    try:
+                        resumo_contas_csv = tab_show[["Conta", "Orcado", "Realizado", "Saldo", "% Consumido", "Status"]].to_csv(index=False)
+                        prompt_sistema = f"Atue como um controlador financeiro especialista. Responda à pergunta com base estrita nestes dados:\nCentro: {centro_sel}, Mês: {mes_sel}\nTabela:\n{resumo_contas_csv}\n\nPergunta: {prompt}"
 
-                    for modelo_atual in modelos_para_tentar:
-                        try:
-                            response = client.models.generate_content(
-                                model=modelo_atual, 
-                                contents=prompt_sistema
-                            )
-                            if response and response.text:
-                                resposta_ia = response.text
-                                break
-                        except Exception:
-                            time.sleep(0.5)
-                            continue
-                    
-                    if resposta_ia:
-                        st.markdown(resposta_ia)
-                        st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
-                    else:
-                        st.error("Não foi possível obter resposta da API neste momento. Tente novamente em instantes.")
+                        # Chamada oficial com o modelo correto e atual
+                        response = client.models.generate_content(
+                            model="gemini-3.8-flash", 
+                            contents=prompt_sistema
+                        )
+                        
+                        if response and response.text:
+                            resposta_ia = response.text
+                            st.markdown(resposta_ia)
+                            st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+                        else:
+                            st.error("A resposta da API veio vazia.")
+                            
+                    except Exception as e:
+                        st.error(f"Erro ao comunicar com a API do Gemini: {e}")
