@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Painel de Custos do RH 2026
+Inclui: painel, consulta detalhada por conta e novo lançamento.
 """
 from pathlib import Path
 import pandas as pd
@@ -19,119 +20,8 @@ CSV_LONG = BASE / "dados_longos.csv"
 CSV_DET = BASE / "detalhes_longos.csv"
 CSV_LANC = BASE / "lancamentos.csv"
 
-# ── Design ─────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-html, body, [class*="css"] {
-    font-family: 'Inter', system-ui, sans-serif;
-}
-.main {
-    background: #f8fafc;
-}
-.block-container {
-    padding-top: 1.5rem !important;
-    padding-bottom: 2rem !important;
-    max-width: 1280px !important;
-}
-[data-testid="stSidebar"] {
-    background: #ffffff;
-    border-right: 1px solid #e2e8f0;
-}
-[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-    color: #0f172a;
-}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    background: #f1f5f9;
-    padding: 6px;
-    border-radius: 12px;
-}
-.stTabs [data-baseweb="tab"] {
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-weight: 500;
-}
-.stTabs [aria-selected="true"] {
-    background: #ffffff !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08);
-}
-
-/* Header */
-.h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: #0f172a;
-    margin: 0 0 0.25rem 0;
-    letter-spacing: -0.02em;
-}
-.h1-sub {
-    font-size: 0.95rem;
-    color: #64748b;
-    margin: 0 0 1.5rem 0;
-}
-
-/* KPI cards */
-.kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-}
-.kpi {
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 1.25rem 1.35rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,.04);
-}
-.kpi-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.4rem;
-}
-.kpi-value {
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: #0f172a;
-    line-height: 1.1;
-}
-.kpi-hint {
-    font-size: 0.8rem;
-    color: #94a3b8;
-    margin-top: 0.35rem;
-}
-
-/* Status colors */
-.status-ok { color: #047857; }
-.status-aten { color: #b45309; }
-.status-crit { color: #b91c1c; }
-
-/* Section titles */
-.sec-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #1e293b;
-    margin: 1.5rem 0 0.75rem 0;
-}
-
-/* Dataframe container */
-div[data-testid="stDataFrame"] {
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    overflow: hidden;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-@st.cache_data(show_spinner="Carregando dados…")
+@st.cache_data(show_spinner="Carregando...")
 def carregar_dados():
     if not CSV_LONG.exists():
         return None, None
@@ -173,14 +63,13 @@ def salvar_lancamento(registro):
 
 df, det = carregar_dados()
 if df is None:
-    st.error("Arquivo **dados_longos.csv** não encontrado.")
+    st.error("Arquivo dados_longos.csv não encontrado na pasta do app.")
     st.stop()
 
-# ── Abas ───────────────────────────────────────────────────
 aba_painel, aba_detalhe, aba_lanc = st.tabs([
-    "📊  Painel",
-    "🔍  Consulta detalhada",
-    "➕  Novo lançamento",
+    "📊 Painel",
+    "🔍 Consulta detalhada",
+    "➕ Novo lançamento",
 ])
 
 # ═══════════════════════════════════════════════════════════
@@ -188,7 +77,7 @@ aba_painel, aba_detalhe, aba_lanc = st.tabs([
 # ═══════════════════════════════════════════════════════════
 with aba_painel:
     with st.sidebar:
-        st.markdown("### Filtros")
+        st.header("Filtros")
         centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
         centro_sel = st.selectbox("Centro de custo", centros, key="p_centro")
         meses = sorted(
@@ -196,8 +85,6 @@ with aba_painel:
             key=lambda x: int(x),
         )
         mes_sel = st.selectbox("Mês", ["Todos os meses"] + meses, key="p_mes")
-        st.markdown("---")
-        st.caption("🟢 OK 🟡 Atenção 🔴 Crítico")
 
     d = df if centro_sel == "Todos os centros" else df[df["Centro"] == centro_sel]
     m = d["Conta_Codigo"] == "Total"
@@ -214,39 +101,15 @@ with aba_painel:
     saldo = orc - real
     pct = real / orc if orc > 0 else 0.0
 
-    st.markdown('<p class="h1">Painel de Custos do RH</p>', unsafe_allow_html=True)
-    st.markdown(
-        f'<p class="h1-sub">Exercício 2026 &nbsp;·&nbsp; {rotulo} &nbsp;·&nbsp; {centro_sel}</p>',
-        unsafe_allow_html=True,
-    )
+    st.title("Painel de Custos do RH")
+    st.caption(f"Exercício 2026 · {rotulo} · {centro_sel}")
 
-    cor_saldo = "#047857" if saldo >= 0 else "#b91c1c"
-    st.markdown(f"""
-    <div class="kpi-grid">
-      <div class="kpi">
-        <div class="kpi-label">Orçamento</div>
-        <div class="kpi-value">R$ {orc:,.2f}</div>
-        <div class="kpi-hint">Valor previsto</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Realizado</div>
-        <div class="kpi-value">R$ {real:,.2f}</div>
-        <div class="kpi-hint">{pct:.1%} consumido</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Saldo</div>
-        <div class="kpi-value" style="color:{cor_saldo}">R$ {saldo:,.2f}</div>
-        <div class="kpi-hint">{'Dentro do orçamento' if saldo >= 0 else 'Acima do orçamento'}</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-label">Consumo</div>
-        <div class="kpi-value">{pct:.1%}</div>
-        <div class="kpi-hint">Realizado ÷ orçamento</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Orçamento", f"R$ {orc:,.2f}")
+    c2.metric("Realizado", f"R$ {real:,.2f}")
+    c3.metric("Saldo", f"R$ {saldo:,.2f}")
+    c4.metric("Consumo", f"{pct:.1%}")
 
-    # Tabela de contas
     contas = d[d["Conta_Codigo"] != "Total"].copy()
     if mes_sel == "Todos os meses":
         prev = (
@@ -292,32 +155,35 @@ with aba_painel:
     tab["_o"] = tab["Status"].map(ordem)
     tab = tab.sort_values(["_o", "Realizado"], ascending=[True, False])
 
+    show = tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status", "Conta_Codigo"]]
+
     def colorir(row):
         if row["Status"] == "Crítico":
-            return ["background-color: #fef2f2; color: #7f1d1d"] * len(row)
+            return ["background-color: #fef2f2"] * len(row)
         if row["Status"] == "Atenção":
-            return ["background-color: #fffbeb; color: #78350f"] * len(row)
-        return ["background-color: #ecfdf5; color: #064e3b"] * len(row)
+            return ["background-color: #fffbeb"] * len(row)
+        return ["background-color: #ecfdf5"] * len(row)
 
-    st.markdown('<p class="sec-title">Contas</p>', unsafe_allow_html=True)
+    st.subheader("Contas")
+    st.caption("Use a aba Consulta detalhada para pesquisar uma conta e ver os lançamentos.")
     st.dataframe(
-        tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]].style.apply(colorir, axis=1).format({
+        show[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]].style.apply(colorir, axis=1).format({
             "Orcado": "R$ {:,.2f}",
             "Realizado": "R$ {:,.2f}",
             "Saldo": "R$ {:,.2f}",
             "%": "{:.1%}",
         }),
         use_container_width=True,
-        height=440,
+        height=420,
         hide_index=True,
     )
 
 # ═══════════════════════════════════════════════════════════
-# CONSULTA DETALHADA
+# CONSULTA DETALHADA (conta por conta + lançamentos)
 # ═══════════════════════════════════════════════════════════
 with aba_detalhe:
-    st.markdown('<p class="h1">Consulta detalhada</p>', unsafe_allow_html=True)
-    st.markdown('<p class="h1-sub">Pesquise uma conta e veja os lançamentos que a compõem.</p>', unsafe_allow_html=True)
+    st.title("Consulta detalhada")
+    st.caption("Pesquise uma conta e veja os lançamentos que compõem o valor.")
 
     centros_d = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
     colf1, colf2 = st.columns(2)
@@ -341,7 +207,7 @@ with aba_detalhe:
 
     if not conta_escolhida.startswith("—"):
         cod_raw = conta_escolhida.split(" | ")[0].lstrip("0")
-        st.markdown(f'<p class="sec-title">Lançamentos · {conta_escolhida}</p>', unsafe_allow_html=True)
+        st.subheader(f"Lançamentos · {conta_escolhida}")
 
         if det is not None and not det.empty:
             f = det.copy()
@@ -359,11 +225,12 @@ with aba_detalhe:
                 st.dataframe(
                     f[cols].sort_values("Valor", ascending=False).style.format({"Valor": "R$ {:,.2f}"}),
                     use_container_width=True,
-                    height=420,
+                    height=400,
                     hide_index=True,
                 )
         else:
-            st.info("Arquivo de detalhes não encontrado. Mostrando valores mensais da conta.")
+            # Fallback: mostra valores mensais da conta a partir de dados_longos
+            st.warning("Arquivo detalhes_longos.csv não encontrado. Mostrando valores mensais da conta.")
             sub = d2[(d2["Conta_Codigo"].astype(str).str.lstrip("0") == cod_raw) & (d2["Tipo"].isin(["Prev.", "Real."]))]
             sub = sub[sub["Mes"] != "Total"]
             if sub.empty:
@@ -376,8 +243,8 @@ with aba_detalhe:
 # NOVO LANÇAMENTO
 # ═══════════════════════════════════════════════════════════
 with aba_lanc:
-    st.markdown('<p class="h1">Novo lançamento</p>', unsafe_allow_html=True)
-    st.markdown('<p class="h1-sub">Registre entregas, consumos ou alocações de qualquer centro e conta.</p>', unsafe_allow_html=True)
+    st.title("Novo lançamento")
+    st.caption("Registre entregas, consumos ou alocações de qualquer centro e conta.")
 
     with st.form("form_lanc", clear_on_submit=True):
         c1, c2 = st.columns(2)
@@ -401,7 +268,7 @@ with aba_lanc:
             data_lanc = st.date_input("Data", value=date.today())
             quem_entregou = st.text_input("Quem entregou")
 
-        observacao = st.text_area("Observação (opcional)", height=80)
+        observacao = st.text_area("Observação (opcional)", height=70)
         ok = st.form_submit_button("Salvar lançamento", type="primary", use_container_width=True)
 
         if ok:
@@ -423,20 +290,87 @@ with aba_lanc:
                 salvar_lancamento(registro)
                 st.success("Lançamento registrado com sucesso.")
 
-    st.markdown('<p class="sec-title">Histórico de lançamentos</p>', unsafe_allow_html=True)
+    st.divider()
+    st.subheader("Histórico de lançamentos")
     hist = carregar_lancamentos()
     if hist.empty:
         st.info("Nenhum lançamento registrado ainda.")
     else:
+        hist = hist.reset_index(drop=True)
+        hist_display = hist.copy()
+        hist_display.insert(0, "id", hist_display.index)
+
         st.dataframe(
-            hist.sort_values("data_registro", ascending=False),
+            hist_display.sort_values("data_registro", ascending=False),
             use_container_width=True,
-            height=340,
+            height=280,
             hide_index=True,
         )
-        st.download_button(
-            "Baixar histórico (CSV)",
-            data=hist.to_csv(index=False).encode("utf-8-sig"),
-            file_name="lancamentos_rh.csv",
-            mime="text/csv",
-        )
+
+        st.markdown("**Gerenciar lançamento**")
+        ids = hist.index.tolist()
+        labels = [
+            f"#{i} | {hist.loc[i, 'data']} | {hist.loc[i, 'nome']} | {hist.loc[i, 'conta']} | Qtd {hist.loc[i, 'quantidade']}"
+            for i in ids
+        ]
+        escolha = st.selectbox("Selecione um lançamento", options=ids, format_func=lambda i: labels[i], key="sel_lanc")
+
+        col_ed, col_rm, col_dl = st.columns(3)
+
+        with col_ed:
+            if st.button("✏️ Editar", use_container_width=True):
+                st.session_state["editando"] = int(escolha)
+
+        with col_rm:
+            if st.button("🗑️ Remover", use_container_width=True, type="primary"):
+                hist = hist.drop(index=escolha).reset_index(drop=True)
+                hist.to_csv(CSV_LANC, index=False)
+                st.success("Lançamento removido.")
+                st.rerun()
+
+        with col_dl:
+            st.download_button(
+                "⬇️ Baixar histórico",
+                data=hist.to_csv(index=False).encode("utf-8-sig"),
+                file_name="lancamentos_rh.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        # Formulário de edição
+        if "editando" in st.session_state and st.session_state["editando"] in hist.index:
+            idx = st.session_state["editando"]
+            row = hist.loc[idx]
+            st.markdown("---")
+            st.markdown(f"**Editando lançamento #{idx}**")
+            with st.form("form_editar"):
+                e1, e2 = st.columns(2)
+                with e1:
+                    e_centro = st.text_input("Centro (lançamento)", value=str(row["centro_lancamento"]))
+                    e_re = st.text_input("RE", value=str(row["re"]))
+                    e_centro_pegou = st.text_input("Centro de quem pegou", value=str(row["centro_quem_pegou"]))
+                    e_qtd = st.number_input("Quantidade", min_value=1, value=int(row["quantidade"]), step=1)
+                with e2:
+                    e_conta = st.text_input("Conta", value=str(row["conta"]))
+                    e_nome = st.text_input("Nome", value=str(row["nome"]))
+                    e_data = st.text_input("Data", value=str(row["data"]))
+                    e_quem = st.text_input("Quem entregou", value=str(row["quem_entregou"]))
+                e_obs = st.text_area("Observação", value=str(row.get("observacao", "")))
+                salvar_ed = st.form_submit_button("Salvar edição", type="primary")
+                if salvar_ed:
+                    hist.at[idx, "centro_lancamento"] = e_centro
+                    hist.at[idx, "conta"] = e_conta
+                    hist.at[idx, "re"] = e_re
+                    hist.at[idx, "nome"] = e_nome
+                    hist.at[idx, "centro_quem_pegou"] = e_centro_pegou
+                    hist.at[idx, "data"] = e_data
+                    hist.at[idx, "quantidade"] = int(e_qtd)
+                    hist.at[idx, "quem_entregou"] = e_quem
+                    hist.at[idx, "observacao"] = e_obs
+                    hist.to_csv(CSV_LANC, index=False)
+                    del st.session_state["editando"]
+                    st.success("Lançamento atualizado.")
+                    st.rerun()
+            if st.button("Cancelar edição"):
+                del st.session_state["editando"]
+                st.rerun()
