@@ -3,10 +3,14 @@
 Painel de Custos do RH 2026
 Inclui: painel, consulta detalhada por conta e novo lançamento.
 """
+import hmac
+import uuid
+from datetime import date
 from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import streamlit as st
-from datetime import date
 
 st.set_page_config(
     page_title="Painel de Custos do RH 2026",
@@ -20,219 +24,304 @@ CSV_LONG = BASE / "dados_longos.csv"
 CSV_DET = BASE / "detalhes_longos.csv"
 CSV_LANC = BASE / "lancamentos.csv"
 
+COLS_LANC = [
+    "id", "data_registro", "centro_lancamento", "conta", "re", "nome",
+    "centro_quem_pegou", "data", "quantidade", "quem_entregou", "observacao",
+]
+MESES_NOME = {
+    1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+}
+CORES_STATUS = {"Crítico": "#fef2f2", "Atenção": "#fffbeb", "OK": "#ecfdf5"}
+
+
+# ───────────────────────── Acesso (senha opcional) ─────────────────────────
+def checar_acesso():
+    """Se existir APP_PASSWORD nos secrets do Streamlit, exige senha."""
+    try:
+        senha = st.secrets.get("APP_PASSWORD")
+    except Exception:
+        senha = None
+    if not senha or st.session_state.get("autenticado"):
+        return
+    st.title("Painel de Custos do RH 2026")
+    digitada = st.text_input("Senha de acesso", type="password")
+    if digitada:
+        if hmac.compare_digest(digitada, str(senha)):
+            st.session_state["autenticado"] = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta.")
+    st.stop()
+
+
+checar_acesso()
+
+
+# ───────────────────────────── Carga de dados ──────────────────────────────
+def _normaliza_conta(serie: pd.Series) -> pd.Series:
+    """Remove zeros à esquerda uma única vez, para todo o app."""
+    s = serie.astype(str).str.strip()
+    return s.where(s == "Total", s.str.lstrip("0").replace("", "0"))
+
 
 @st.cache_data(show_spinner="Carregando...")
 def carregar_dados():
     if not CSV_LONG.exists():
         return None, None
-    df = pd.read_csv(CSV_LONG)
+
+    df = pd.read_csv(CSV_LONG, dtype={"Centro_Codigo": str, "Conta_Codigo": str})
     df["Centro_Codigo"] = df["Centro_Codigo"].astype(str).str.strip()
     df["Centro_Nome"] = df["Centro_Nome"].astype(str).str.strip()
     df["Centro"] = df["Centro_Codigo"] + " - " + df["Centro_Nome"]
+    df["Conta_Codigo"] = _normaliza_conta(df["Conta_Codigo"])
+    df["Conta_Descricao"] = df["Conta_Descricao"].fillna("").astype(str).str.strip()
     df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
     df["Valor_Abs"] = df["Valor"].abs()
-    df["Mes"] = df["Mes"].astype(str)
+    df["Mes"] = df["Mes"].astype(str).str.strip()
 
     det = None
     if CSV_DET.exists():
-        det = pd.read_csv(CSV_DET)
+        det = pd.read_csv(CSV_DET, dtype={"Centro_Codigo": str, "Conta_Codigo": str})
         det["Centro_Codigo"] = det["Centro_Codigo"].astype(str).str.strip()
-        det["Conta_Codigo"] = det["Conta_Codigo"].astype(str).str.strip()
+        det["Conta_Codigo"] = _normaliza_conta(det["Conta_Codigo"])
         det["Valor"] = pd.to_numeric(det["Valor"], errors="coerce").fillna(0)
         if "Mes_Trans" in det.columns:
             det["Mes_Trans"] = pd.to_numeric(det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
     return df, det
 
 
-def carregar_lancamentos():
-    cols = [
-        "data_registro", "centro_lancamento", "conta", "re", "nome",
-        "centro_quem_pegou", "data", "quantidade", "quem_entregou", "observacao",
+def gravar_lancamentos(hist: pd.DataFrame):
+    """Grava em arquivo temporário e troca, para não corromper o CSV."""
+    tmp = CSV_LANC.with_suffix(".tmp")
+    hist[COLS_LANC].to_csv(tmp, index=False)
+    tmp.replace(CSV_LANC)
+
+
+def carregar_lancamentos() -> pd.DataFrame:
+    if not CSV_LANC.exists():
+        return pd.DataFrame(columns=COLS_LANC)
+    # dtype=str preserva zeros à esquerda do RE
+    hist = pd.read_csv(CSV_LANC, dtype=str).fillna("")
+    for c in COLS_LANC:
+        if c not in hist.columns:
+            hist[c] = ""
+    # ids estáveis (o índice muda quando se remove uma linha)
+    sem_id = hist["id"].eq("")
+    if sem_id.any():
+        hist.loc[sem_id, "id"] = [uuid.uuid4().hex[:8] for _ in range(sem_id.sum())]
+        gravar_lancamentos(hist)
+    hist["quantidade"] = pd.to_numeric(hist["quantidade"], errors="coerce").fillna(1).astype(int)
+    return hist[COLS_LANC]
+
+
+# ───────────────────────────── Funções de cálculo ──────────────────────────
+def totais(d: pd.DataFrame, mes):
+    """Orçado e realizado a partir das linhas 'Total' (mes=None → anual)."""
+    mes_ref = "Total" if mes is None else mes
+    t = d[(d["Conta_Codigo"] == "Total") & (d["Mes"] == mes_ref)]
+    orc = float(t.loc[t["Tipo"] == "Prev.", "Valor_Abs"].sum())
+    real = float(t.loc[t["Tipo"] == "Real.", "Valor_Abs"].sum())
+    return orc, real
+
+
+def resumo_contas(d: pd.DataFrame, mes) -> pd.DataFrame:
+    """Tabela por conta: orçado, realizado, saldo, % e status."""
+    mes_ref = "Total" if mes is None else mes
+    base = d[
+        (d["Conta_Codigo"] != "Total")
+        & (d["Mes"] == mes_ref)
+        & d["Tipo"].isin(["Prev.", "Real."])
     ]
-    if CSV_LANC.exists():
-        return pd.read_csv(CSV_LANC)
-    return pd.DataFrame(columns=cols)
+    tab = base.pivot_table(
+        index=["Conta_Codigo", "Conta_Descricao"],
+        columns="Tipo", values="Valor_Abs", aggfunc="sum", fill_value=0,
+    ).reset_index()
+    tab = tab.rename(columns={"Prev.": "Orcado", "Real.": "Realizado"})
+    for c in ("Orcado", "Realizado"):
+        if c not in tab.columns:
+            tab[c] = 0.0
+
+    tab = tab[~((tab["Orcado"] == 0) & (tab["Realizado"] == 0))].copy()
+    tab["Saldo"] = tab["Orcado"] - tab["Realizado"]
+
+    tem_orc = tab["Orcado"] > 0
+    tab["%"] = np.where(
+        tem_orc,
+        tab["Realizado"] / tab["Orcado"].where(tem_orc, 1),
+        (tab["Realizado"] > 0).astype(float),  # sem orçamento mas com gasto = 100%
+    )
+    tab["Status"] = np.select(
+        [tab["%"] >= 1, tab["%"] >= 0.8], ["Crítico", "Atenção"], default="OK"
+    )
+    tab["Conta"] = tab["Conta_Codigo"].str.zfill(10) + " | " + tab["Conta_Descricao"]
+
+    ordem = {"Crítico": 0, "Atenção": 1, "OK": 2}
+    tab = tab.assign(_o=tab["Status"].map(ordem)).sort_values(
+        ["_o", "Realizado"], ascending=[True, False]
+    )
+    return tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]]
 
 
-def salvar_lancamento(registro):
-    hist = carregar_lancamentos()
-    hist = pd.concat([hist, pd.DataFrame([registro])], ignore_index=True)
-    hist.to_csv(CSV_LANC, index=False)
-    return hist
+def serie_mensal(d: pd.DataFrame) -> pd.DataFrame:
+    """Orçado x realizado por mês (para o gráfico)."""
+    t = d[
+        (d["Conta_Codigo"] == "Total")
+        & d["Tipo"].isin(["Prev.", "Real."])
+        & d["Mes"].str.isdigit()
+    ]
+    if t.empty:
+        return pd.DataFrame()
+    piv = t.pivot_table(index="Mes", columns="Tipo", values="Valor_Abs", aggfunc="sum", fill_value=0)
+    piv.index = [f"{int(m):02d}-{MESES_NOME.get(int(m), m)}" for m in piv.index]
+    return piv.sort_index().rename(columns={"Prev.": "Orçado", "Real.": "Realizado"})
 
 
+def colorir(row):
+    return [f"background-color: {CORES_STATUS[row['Status']]}"] * len(row)
+
+
+def moeda(v) -> str:
+    """R$ no padrão brasileiro: 1.234,56"""
+    return "R$ " + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+# ─────────────────────────────── Dados base ────────────────────────────────
 df, det = carregar_dados()
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado na pasta do app.")
     st.stop()
 
+mapa_centro = (
+    df[["Centro_Codigo", "Centro"]].drop_duplicates().set_index("Centro_Codigo")["Centro"].to_dict()
+)
+codigos_centro = sorted(mapa_centro)
+meses_validos = sorted([m for m in df["Mes"].unique() if m.isdigit()], key=int)
+
+
+def nome_mes(m):
+    return "Todos os meses" if m is None else MESES_NOME.get(int(m), m)
+
+
+# ───────────────────────── Filtros (valem p/ Painel e Consulta) ────────────
+with st.sidebar:
+    st.header("Filtros")
+    centro_sel = st.selectbox(
+        "Centro de custo",
+        [None] + codigos_centro,
+        format_func=lambda c: "Todos os centros" if c is None else mapa_centro[c],
+    )
+    mes_sel = st.selectbox("Mês", [None] + meses_validos, format_func=nome_mes)
+    st.caption("Os filtros valem para as abas Painel e Consulta detalhada.")
+
+d = df if centro_sel is None else df[df["Centro_Codigo"] == centro_sel]
+rotulo_centro = "Todos os centros" if centro_sel is None else mapa_centro[centro_sel]
+
 aba_painel, aba_detalhe, aba_lanc = st.tabs([
-    "📊 Painel",
-    "🔍 Consulta detalhada",
-    "➕ Novo lançamento",
+    "📊 Painel", "🔍 Consulta detalhada", "➕ Novo lançamento",
 ])
 
 # ═══════════════════════════════════════════════════════════
 # PAINEL
 # ═══════════════════════════════════════════════════════════
 with aba_painel:
-    with st.sidebar:
-        st.header("Filtros")
-        centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
-        centro_sel = st.selectbox("Centro de custo", centros, key="p_centro")
-        meses = sorted(
-            [m for m in df["Mes"].unique() if m != "Total" and str(m).isdigit()],
-            key=lambda x: int(x),
-        )
-        mes_sel = st.selectbox("Mês", ["Todos os meses"] + meses, key="p_mes")
+    st.title("Painel de Custos do RH")
+    rotulo = "Anual" if mes_sel is None else f"Mês {nome_mes(mes_sel)}"
+    st.caption(f"Exercício 2026 · {rotulo} · {rotulo_centro}")
 
-    d = df if centro_sel == "Todos os centros" else df[df["Centro"] == centro_sel]
-    m = d["Conta_Codigo"] == "Total"
-
-    if mes_sel == "Todos os meses":
-        orc = float(d[m & (d["Tipo"] == "Prev.") & (d["Mes"] == "Total")]["Valor_Abs"].sum())
-        real = float(d[m & (d["Tipo"] == "Real.") & (d["Mes"] == "Total")]["Valor_Abs"].sum())
-        rotulo = "Anual"
-    else:
-        orc = float(d[m & (d["Tipo"] == "Prev.") & (d["Mes"] == mes_sel)]["Valor_Abs"].sum())
-        real = float(d[m & (d["Tipo"] == "Real.") & (d["Mes"] == mes_sel)]["Valor_Abs"].sum())
-        rotulo = f"Mês {mes_sel}"
-
+    orc, real = totais(d, mes_sel)
     saldo = orc - real
     pct = real / orc if orc > 0 else 0.0
 
-    st.title("Painel de Custos do RH")
-    st.caption(f"Exercício 2026 · {rotulo} · {centro_sel}")
-
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Orçamento", f"R$ {orc:,.2f}")
-    c2.metric("Realizado", f"R$ {real:,.2f}")
-    c3.metric("Saldo", f"R$ {saldo:,.2f}")
+    c1.metric("Orçamento", moeda(orc))
+    c2.metric("Realizado", moeda(real))
+    c3.metric("Saldo", moeda(saldo))
     c4.metric("Consumo", f"{pct:.1%}")
+    st.progress(min(pct, 1.0))
 
-    contas = d[d["Conta_Codigo"] != "Total"].copy()
-    if mes_sel == "Todos os meses":
-        prev = (
-            contas[(contas["Tipo"] == "Prev.") & (contas["Mes"] == "Total")]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum().rename(columns={"Valor_Abs": "Orcado"})
-        )
-        real_df = (
-            contas[(contas["Tipo"] == "Real.") & (contas["Mes"] == "Total")]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum().rename(columns={"Valor_Abs": "Realizado"})
-        )
-    else:
-        prev = (
-            contas[(contas["Tipo"] == "Prev.") & (contas["Mes"] == mes_sel)]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum().rename(columns={"Valor_Abs": "Orcado"})
-        )
-        real_df = (
-            contas[(contas["Tipo"] == "Real.") & (contas["Mes"] == mes_sel)]
-            .groupby(["Conta_Codigo", "Conta_Descricao"], as_index=False)["Valor_Abs"]
-            .sum().rename(columns={"Valor_Abs": "Realizado"})
-        )
-
-    tab = prev.merge(real_df, on=["Conta_Codigo", "Conta_Descricao"], how="outer").fillna(0)
-    tab["Saldo"] = tab["Orcado"] - tab["Realizado"]
-    tab["%"] = tab.apply(
-        lambda r: r["Realizado"] / r["Orcado"] if r["Orcado"] > 0 else (1.0 if r["Realizado"] > 0 else 0.0),
-        axis=1,
-    )
-
-    def status_row(r):
-        if r["Saldo"] < 0 or (r["Orcado"] == 0 and r["Realizado"] > 0) or r["%"] >= 1:
-            return "Crítico"
-        if r["%"] >= 0.8:
-            return "Atenção"
-        return "OK"
-
-    tab["Status"] = tab.apply(status_row, axis=1)
-    tab["Conta"] = tab["Conta_Codigo"].astype(str).str.zfill(10) + " | " + tab["Conta_Descricao"].astype(str)
-    tab = tab[~((tab["Orcado"] == 0) & (tab["Realizado"] == 0))]
-    ordem = {"Crítico": 0, "Atenção": 1, "OK": 2}
-    tab["_o"] = tab["Status"].map(ordem)
-    tab = tab.sort_values(["_o", "Realizado"], ascending=[True, False])
-
-    show = tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status", "Conta_Codigo"]]
-
-    def colorir(row):
-        if row["Status"] == "Crítico":
-            return ["background-color: #fef2f2"] * len(row)
-        if row["Status"] == "Atenção":
-            return ["background-color: #fffbeb"] * len(row)
-        return ["background-color: #ecfdf5"] * len(row)
+    mensal = serie_mensal(d)
+    if not mensal.empty:
+        st.subheader("Evolução mensal")
+        st.bar_chart(mensal, height=280)
 
     st.subheader("Contas")
-    st.caption("Use a aba Consulta detalhada para pesquisar uma conta e ver os lançamentos.")
-    st.dataframe(
-        show[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]].style.apply(colorir, axis=1).format({
-            "Orcado": "R$ {:,.2f}",
-            "Realizado": "R$ {:,.2f}",
-            "Saldo": "R$ {:,.2f}",
-            "%": "{:.1%}",
-        }),
-        use_container_width=True,
-        height=420,
-        hide_index=True,
+    tab = resumo_contas(d, mes_sel)
+    filtro_status = st.multiselect(
+        "Mostrar status", ["Crítico", "Atenção", "OK"], default=["Crítico", "Atenção", "OK"]
     )
+    tab = tab[tab["Status"].isin(filtro_status)]
+
+    if tab.empty:
+        st.info("Nenhuma conta para os filtros selecionados.")
+    else:
+        st.dataframe(
+            tab.style.apply(colorir, axis=1).format({
+                "Orcado": moeda, "Realizado": moeda, "Saldo": moeda, "%": "{:.1%}",
+            }),
+            use_container_width=True,
+            height=420,
+            hide_index=True,
+        )
+        st.download_button(
+            "⬇️ Baixar tabela de contas",
+            data=tab.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+            file_name="contas_resumo.csv",
+            mime="text/csv",
+        )
+    st.caption("Use a aba Consulta detalhada para ver os lançamentos de uma conta.")
 
 # ═══════════════════════════════════════════════════════════
-# CONSULTA DETALHADA (conta por conta + lançamentos)
+# CONSULTA DETALHADA
 # ═══════════════════════════════════════════════════════════
 with aba_detalhe:
     st.title("Consulta detalhada")
-    st.caption("Pesquise uma conta e veja os lançamentos que compõem o valor.")
+    st.caption(f"Centro: {rotulo_centro} · Mês: {nome_mes(mes_sel)} (ajuste na barra lateral)")
 
-    centros_d = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
-    colf1, colf2 = st.columns(2)
-    with colf1:
-        centro_d = st.selectbox("Centro de custo", centros_d, key="d_centro")
-    with colf2:
-        mes_d = st.selectbox("Mês", ["Todos os meses"] + sorted(
-            [m for m in df["Mes"].unique() if m != "Total" and str(m).isdigit()],
-            key=lambda x: int(x),
-        ), key="d_mes")
-
-    d2 = df if centro_d == "Todos os centros" else df[df["Centro"] == centro_d]
     contas_opts = (
-        d2[d2["Conta_Codigo"] != "Total"][["Conta_Codigo", "Conta_Descricao"]]
+        d[d["Conta_Codigo"] != "Total"][["Conta_Codigo", "Conta_Descricao"]]
         .drop_duplicates()
         .sort_values("Conta_Descricao")
     )
-    contas_opts["Label"] = contas_opts["Conta_Codigo"].astype(str).str.zfill(10) + " | " + contas_opts["Conta_Descricao"]
-    opcoes = ["— selecione uma conta —"] + contas_opts["Label"].tolist()
-    conta_escolhida = st.selectbox("Conta", opcoes)
+    contas_opts["Label"] = contas_opts["Conta_Codigo"].str.zfill(10) + " | " + contas_opts["Conta_Descricao"]
+    label_para_cod = dict(zip(contas_opts["Label"], contas_opts["Conta_Codigo"]))
 
-    if not conta_escolhida.startswith("—"):
-        cod_raw = conta_escolhida.split(" | ")[0].lstrip("0")
+    conta_escolhida = st.selectbox(
+        "Conta",
+        [None] + list(label_para_cod),
+        format_func=lambda x: "— selecione uma conta —" if x is None else x,
+    )
+
+    if conta_escolhida:
+        cod = label_para_cod[conta_escolhida]
         st.subheader(f"Lançamentos · {conta_escolhida}")
 
         if det is not None and not det.empty:
-            f = det.copy()
-            if centro_d != "Todos os centros":
-                cc = centro_d.split(" - ")[0].strip()
-                f = f[f["Centro_Codigo"] == cc]
-            f = f[f["Conta_Codigo"].astype(str).str.lstrip("0") == cod_raw]
-            if mes_d != "Todos os meses" and "Mes_Trans" in f.columns:
-                f = f[f["Mes_Trans"] == int(mes_d)]
+            f = det[det["Conta_Codigo"] == cod]
+            if centro_sel is not None:
+                f = f[f["Centro_Codigo"] == centro_sel]
+            if mes_sel is not None and "Mes_Trans" in f.columns:
+                f = f[f["Mes_Trans"] == int(mes_sel)]
 
             cols = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in f.columns]
             if f.empty or not cols:
                 st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
             else:
+                f = f[cols].sort_values("Valor", ascending=False)
+                st.metric("Total dos lançamentos", moeda(f["Valor"].sum()))
                 st.dataframe(
-                    f[cols].sort_values("Valor", ascending=False).style.format({"Valor": "R$ {:,.2f}"}),
-                    use_container_width=True,
-                    height=400,
-                    hide_index=True,
+                    f.style.format({"Valor": moeda}),
+                    use_container_width=True, height=400, hide_index=True,
+                )
+                st.download_button(
+                    "⬇️ Baixar lançamentos",
+                    data=f.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                    file_name=f"lancamentos_conta_{cod}.csv",
+                    mime="text/csv",
                 )
         else:
-            # Fallback: mostra valores mensais da conta a partir de dados_longos
             st.warning("Arquivo detalhes_longos.csv não encontrado. Mostrando valores mensais da conta.")
-            sub = d2[(d2["Conta_Codigo"].astype(str).str.lstrip("0") == cod_raw) & (d2["Tipo"].isin(["Prev.", "Real."]))]
-            sub = sub[sub["Mes"] != "Total"]
+            sub = d[(d["Conta_Codigo"] == cod) & d["Tipo"].isin(["Prev.", "Real."]) & (d["Mes"] != "Total")]
             if sub.empty:
                 st.info("Sem dados mensais para esta conta.")
             else:
@@ -246,40 +335,37 @@ with aba_lanc:
     st.title("Novo lançamento")
     st.caption("Registre entregas, consumos ou alocações de qualquer centro e conta.")
 
+    centros_labels = [mapa_centro[c] for c in codigos_centro]
+    contas_lista = sorted(
+        df[df["Conta_Codigo"] != "Total"]["Conta_Descricao"].replace("", np.nan).dropna().unique().tolist()
+    )
+
     with st.form("form_lanc", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
-            centro_lanc = st.selectbox(
-                "Centro de custo (do lançamento)",
-                sorted(df["Centro"].unique().tolist()),
-            )
-            re = st.text_input("RE")
-            centro_pegou = st.selectbox(
-                "Centro de custo de quem pegou",
-                sorted(df["Centro"].unique().tolist()),
-            )
+            centro_lanc = st.selectbox("Centro de custo (do lançamento)", centros_labels)
+            matricula = st.text_input("RE")
+            centro_pegou = st.selectbox("Centro de custo de quem pegou", centros_labels)
             quantidade = st.number_input("Quantidade", min_value=1, value=1, step=1)
         with c2:
-            contas_lista = sorted(
-                df[df["Conta_Codigo"] != "Total"]["Conta_Descricao"].dropna().unique().tolist()
-            )
             conta = st.selectbox("Conta", contas_lista)
             nome = st.text_input("Nome")
-            data_lanc = st.date_input("Data", value=date.today())
+            data_lanc = st.date_input("Data", value=date.today(), format="DD/MM/YYYY")
             quem_entregou = st.text_input("Quem entregou")
 
         observacao = st.text_area("Observação (opcional)", height=70)
         ok = st.form_submit_button("Salvar lançamento", type="primary", use_container_width=True)
 
         if ok:
-            if not re.strip() or not nome.strip() or not quem_entregou.strip():
+            if not matricula.strip() or not nome.strip() or not quem_entregou.strip():
                 st.error("Preencha RE, Nome e Quem entregou.")
             else:
                 registro = {
+                    "id": uuid.uuid4().hex[:8],
                     "data_registro": date.today().isoformat(),
                     "centro_lancamento": centro_lanc,
                     "conta": conta,
-                    "re": re.strip(),
+                    "re": matricula.strip(),
                     "nome": nome.strip(),
                     "centro_quem_pegou": centro_pegou,
                     "data": data_lanc.isoformat(),
@@ -287,47 +373,45 @@ with aba_lanc:
                     "quem_entregou": quem_entregou.strip(),
                     "observacao": observacao.strip(),
                 }
-                salvar_lancamento(registro)
+                hist_atual = carregar_lancamentos()
+                hist_atual = pd.concat([hist_atual, pd.DataFrame([registro])], ignore_index=True)
+                gravar_lancamentos(hist_atual)
                 st.success("Lançamento registrado com sucesso.")
 
     st.divider()
     st.subheader("Histórico de lançamentos")
     hist = carregar_lancamentos()
+
     if hist.empty:
         st.info("Nenhum lançamento registrado ainda.")
     else:
-        hist = hist.reset_index(drop=True)
-        hist_display = hist.copy()
-        hist_display.insert(0, "id", hist_display.index)
+        busca = st.text_input("Buscar (nome, RE, conta...)", key="busca_lanc")
+        vis = hist
+        if busca.strip():
+            mask = hist.astype(str).apply(lambda col: col.str.contains(busca.strip(), case=False, na=False)).any(axis=1)
+            vis = hist[mask]
 
         st.dataframe(
-            hist_display.sort_values("data_registro", ascending=False),
-            use_container_width=True,
-            height=280,
-            hide_index=True,
+            vis.sort_values("data_registro", ascending=False),
+            use_container_width=True, height=280, hide_index=True,
         )
 
         st.markdown("**Gerenciar lançamento**")
-        ids = hist.index.tolist()
-        labels = [
-            f"#{i} | {hist.loc[i, 'data']} | {hist.loc[i, 'nome']} | {hist.loc[i, 'conta']} | Qtd {hist.loc[i, 'quantidade']}"
-            for i in ids
-        ]
-        escolha = st.selectbox("Selecione um lançamento", options=ids, format_func=lambda i: labels[i], key="sel_lanc")
+        rotulos = {
+            r["id"]: f"{r['data']} | {r['nome']} | {r['conta']} | Qtd {r['quantidade']}"
+            for _, r in hist.iterrows()
+        }
+        escolha = st.selectbox("Selecione um lançamento", list(rotulos), format_func=rotulos.get, key="sel_lanc")
 
         col_ed, col_rm, col_dl = st.columns(3)
-
         with col_ed:
             if st.button("✏️ Editar", use_container_width=True):
-                st.session_state["editando"] = int(escolha)
-
+                st.session_state["editando"] = escolha
+                st.session_state.pop("removendo", None)
         with col_rm:
-            if st.button("🗑️ Remover", use_container_width=True, type="primary"):
-                hist = hist.drop(index=escolha).reset_index(drop=True)
-                hist.to_csv(CSV_LANC, index=False)
-                st.success("Lançamento removido.")
-                st.rerun()
-
+            if st.button("🗑️ Remover", use_container_width=True):
+                st.session_state["removendo"] = escolha
+                st.session_state.pop("editando", None)
         with col_dl:
             st.download_button(
                 "⬇️ Baixar histórico",
@@ -337,40 +421,66 @@ with aba_lanc:
                 use_container_width=True,
             )
 
-        # Formulário de edição
-        if "editando" in st.session_state and st.session_state["editando"] in hist.index:
-            idx = st.session_state["editando"]
-            row = hist.loc[idx]
+        # Confirmação de remoção
+        if st.session_state.get("removendo") in hist["id"].values:
+            rid = st.session_state["removendo"]
+            st.warning(f"Remover definitivamente: {rotulos[rid]}?")
+            cs, cn = st.columns(2)
+            if cs.button("Sim, remover", type="primary"):
+                gravar_lancamentos(hist[hist["id"] != rid])
+                st.session_state.pop("removendo", None)
+                st.success("Lançamento removido.")
+                st.rerun()
+            if cn.button("Cancelar"):
+                st.session_state.pop("removendo", None)
+                st.rerun()
+
+        # Edição
+        if st.session_state.get("editando") in hist["id"].values:
+            eid = st.session_state["editando"]
+            row = hist[hist["id"] == eid].iloc[0]
+
+            def opcoes_com(valor, lista):
+                """Garante que o valor atual (mesmo antigo) esteja nas opções."""
+                return lista if valor in lista else [valor] + lista
+
+            data_atual = pd.to_datetime(row["data"], errors="coerce")
+            data_atual = date.today() if pd.isna(data_atual) else data_atual.date()
+
             st.markdown("---")
-            st.markdown(f"**Editando lançamento #{idx}**")
+            st.markdown(f"**Editando lançamento {eid}**")
             with st.form("form_editar"):
                 e1, e2 = st.columns(2)
                 with e1:
-                    e_centro = st.text_input("Centro (lançamento)", value=str(row["centro_lancamento"]))
-                    e_re = st.text_input("RE", value=str(row["re"]))
-                    e_centro_pegou = st.text_input("Centro de quem pegou", value=str(row["centro_quem_pegou"]))
+                    op_c = opcoes_com(row["centro_lancamento"], centros_labels)
+                    e_centro = st.selectbox("Centro (lançamento)", op_c, index=op_c.index(row["centro_lancamento"]))
+                    e_re = st.text_input("RE", value=row["re"])
+                    op_p = opcoes_com(row["centro_quem_pegou"], centros_labels)
+                    e_centro_pegou = st.selectbox("Centro de quem pegou", op_p, index=op_p.index(row["centro_quem_pegou"]))
                     e_qtd = st.number_input("Quantidade", min_value=1, value=int(row["quantidade"]), step=1)
                 with e2:
-                    e_conta = st.text_input("Conta", value=str(row["conta"]))
-                    e_nome = st.text_input("Nome", value=str(row["nome"]))
-                    e_data = st.text_input("Data", value=str(row["data"]))
-                    e_quem = st.text_input("Quem entregou", value=str(row["quem_entregou"]))
-                e_obs = st.text_area("Observação", value=str(row.get("observacao", "")))
-                salvar_ed = st.form_submit_button("Salvar edição", type="primary")
-                if salvar_ed:
-                    hist.at[idx, "centro_lancamento"] = e_centro
-                    hist.at[idx, "conta"] = e_conta
-                    hist.at[idx, "re"] = e_re
-                    hist.at[idx, "nome"] = e_nome
-                    hist.at[idx, "centro_quem_pegou"] = e_centro_pegou
-                    hist.at[idx, "data"] = e_data
-                    hist.at[idx, "quantidade"] = int(e_qtd)
-                    hist.at[idx, "quem_entregou"] = e_quem
-                    hist.at[idx, "observacao"] = e_obs
-                    hist.to_csv(CSV_LANC, index=False)
-                    del st.session_state["editando"]
-                    st.success("Lançamento atualizado.")
-                    st.rerun()
+                    op_k = opcoes_com(row["conta"], contas_lista)
+                    e_conta = st.selectbox("Conta", op_k, index=op_k.index(row["conta"]))
+                    e_nome = st.text_input("Nome", value=row["nome"])
+                    e_data = st.date_input("Data", value=data_atual, format="DD/MM/YYYY")
+                    e_quem = st.text_input("Quem entregou", value=row["quem_entregou"])
+                e_obs = st.text_area("Observação", value=row["observacao"])
+
+                if st.form_submit_button("Salvar edição", type="primary"):
+                    if not e_re.strip() or not e_nome.strip() or not e_quem.strip():
+                        st.error("Preencha RE, Nome e Quem entregou.")
+                    else:
+                        novo = hist.copy()
+                        i = novo.index[novo["id"] == eid][0]
+                        novo.loc[i, ["centro_lancamento", "conta", "re", "nome", "centro_quem_pegou",
+                                     "data", "quantidade", "quem_entregou", "observacao"]] = [
+                            e_centro, e_conta, e_re.strip(), e_nome.strip(), e_centro_pegou,
+                            e_data.isoformat(), int(e_qtd), e_quem.strip(), e_obs.strip(),
+                        ]
+                        gravar_lancamentos(novo)
+                        st.session_state.pop("editando", None)
+                        st.success("Lançamento atualizado.")
+                        st.rerun()
             if st.button("Cancelar edição"):
-                del st.session_state["editando"]
+                st.session_state.pop("editando", None)
                 st.rerun()
