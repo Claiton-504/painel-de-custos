@@ -218,7 +218,7 @@ d = df if centro_sel is None else df[df["Centro_Codigo"] == centro_sel]
 rotulo_centro = "Todos os centros" if centro_sel is None else mapa_centro[centro_sel]
 
 aba_painel, aba_detalhe, aba_lanc = st.tabs([
-    "📊 Painel", "🔍 Consulta detalhada", "➕ Novo lançamento",
+    "📊 Painel", "🔍 Consulta detalhada", "📋 Lançamentos",
 ])
 
 # ═══════════════════════════════════════════════════════════
@@ -329,18 +329,19 @@ with aba_detalhe:
                 st.dataframe(piv, use_container_width=True, hide_index=True)
 
 # ═══════════════════════════════════════════════════════════
-# NOVO LANÇAMENTO
+# LANÇAMENTOS
 # ═══════════════════════════════════════════════════════════
-with aba_lanc:
-    st.title("Novo lançamento")
+centros_labels = [mapa_centro[c] for c in codigos_centro]
+contas_lista = sorted(
+    df[df["Conta_Codigo"] != "Total"]["Conta_Descricao"].replace("", np.nan).dropna().unique().tolist()
+)
+
+
+@st.dialog("Novo lançamento", width="large")
+def dialogo_novo_lancamento():
+    """Janela que abre ao clicar em 'Novo lançamento'."""
     st.caption("Registre entregas, consumos ou alocações de qualquer centro e conta.")
-
-    centros_labels = [mapa_centro[c] for c in codigos_centro]
-    contas_lista = sorted(
-        df[df["Conta_Codigo"] != "Total"]["Conta_Descricao"].replace("", np.nan).dropna().unique().tolist()
-    )
-
-    with st.form("form_lanc", clear_on_submit=True):
+    with st.form("form_lanc"):
         c1, c2 = st.columns(2)
         with c1:
             centro_lanc = st.selectbox("Centro de custo (do lançamento)", centros_labels)
@@ -356,30 +357,40 @@ with aba_lanc:
         observacao = st.text_area("Observação (opcional)", height=70)
         ok = st.form_submit_button("Salvar lançamento", type="primary", use_container_width=True)
 
-        if ok:
-            if not matricula.strip() or not nome.strip() or not quem_entregou.strip():
-                st.error("Preencha RE, Nome e Quem entregou.")
-            else:
-                registro = {
-                    "id": uuid.uuid4().hex[:8],
-                    "data_registro": date.today().isoformat(),
-                    "centro_lancamento": centro_lanc,
-                    "conta": conta,
-                    "re": matricula.strip(),
-                    "nome": nome.strip(),
-                    "centro_quem_pegou": centro_pegou,
-                    "data": data_lanc.isoformat(),
-                    "quantidade": int(quantidade),
-                    "quem_entregou": quem_entregou.strip(),
-                    "observacao": observacao.strip(),
-                }
-                hist_atual = carregar_lancamentos()
-                hist_atual = pd.concat([hist_atual, pd.DataFrame([registro])], ignore_index=True)
-                gravar_lancamentos(hist_atual)
-                st.success("Lançamento registrado com sucesso.")
+    if ok:
+        if not matricula.strip() or not nome.strip() or not quem_entregou.strip():
+            st.error("Preencha RE, Nome e Quem entregou.")
+        else:
+            registro = {
+                "id": uuid.uuid4().hex[:8],
+                "data_registro": date.today().isoformat(),
+                "centro_lancamento": centro_lanc,
+                "conta": conta,
+                "re": matricula.strip(),
+                "nome": nome.strip(),
+                "centro_quem_pegou": centro_pegou,
+                "data": data_lanc.isoformat(),
+                "quantidade": int(quantidade),
+                "quem_entregou": quem_entregou.strip(),
+                "observacao": observacao.strip(),
+            }
+            hist_atual = carregar_lancamentos()
+            hist_atual = pd.concat([hist_atual, pd.DataFrame([registro])], ignore_index=True)
+            gravar_lancamentos(hist_atual)
+            st.session_state["aviso"] = "Lançamento registrado com sucesso."
+            st.rerun()  # fecha a janela e atualiza o histórico
 
-    st.divider()
-    st.subheader("Histórico de lançamentos")
+
+with aba_lanc:
+    if "aviso" in st.session_state:
+        st.toast(st.session_state.pop("aviso"), icon="✅")
+
+    st.title("Lançamentos")
+
+    col_tit, col_btn = st.columns([4, 1])
+    col_tit.subheader("Histórico de lançamentos")
+    if col_btn.button("➕ Novo lançamento", type="primary", use_container_width=True):
+        dialogo_novo_lancamento()
     hist = carregar_lancamentos()
 
     if hist.empty:
