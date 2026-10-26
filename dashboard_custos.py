@@ -296,15 +296,81 @@ with aba_lanc:
     if hist.empty:
         st.info("Nenhum lançamento registrado ainda.")
     else:
+        hist = hist.reset_index(drop=True)
+        hist_display = hist.copy()
+        hist_display.insert(0, "id", hist_display.index)
+
         st.dataframe(
-            hist.sort_values("data_registro", ascending=False),
+            hist_display.sort_values("data_registro", ascending=False),
             use_container_width=True,
-            height=320,
+            height=280,
             hide_index=True,
         )
-        st.download_button(
-            "Baixar histórico (CSV)",
-            data=hist.to_csv(index=False).encode("utf-8-sig"),
-            file_name="lancamentos_rh.csv",
-            mime="text/csv",
-        )
+
+        st.markdown("**Gerenciar lançamento**")
+        ids = hist.index.tolist()
+        labels = [
+            f"#{i} | {hist.loc[i, 'data']} | {hist.loc[i, 'nome']} | {hist.loc[i, 'conta']} | Qtd {hist.loc[i, 'quantidade']}"
+            for i in ids
+        ]
+        escolha = st.selectbox("Selecione um lançamento", options=ids, format_func=lambda i: labels[i], key="sel_lanc")
+
+        col_ed, col_rm, col_dl = st.columns(3)
+
+        with col_ed:
+            if st.button("✏️ Editar", use_container_width=True):
+                st.session_state["editando"] = int(escolha)
+
+        with col_rm:
+            if st.button("🗑️ Remover", use_container_width=True, type="primary"):
+                hist = hist.drop(index=escolha).reset_index(drop=True)
+                hist.to_csv(CSV_LANC, index=False)
+                st.success("Lançamento removido.")
+                st.rerun()
+
+        with col_dl:
+            st.download_button(
+                "⬇️ Baixar histórico",
+                data=hist.to_csv(index=False).encode("utf-8-sig"),
+                file_name="lancamentos_rh.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        # Formulário de edição
+        if "editando" in st.session_state and st.session_state["editando"] in hist.index:
+            idx = st.session_state["editando"]
+            row = hist.loc[idx]
+            st.markdown("---")
+            st.markdown(f"**Editando lançamento #{idx}**")
+            with st.form("form_editar"):
+                e1, e2 = st.columns(2)
+                with e1:
+                    e_centro = st.text_input("Centro (lançamento)", value=str(row["centro_lancamento"]))
+                    e_re = st.text_input("RE", value=str(row["re"]))
+                    e_centro_pegou = st.text_input("Centro de quem pegou", value=str(row["centro_quem_pegou"]))
+                    e_qtd = st.number_input("Quantidade", min_value=1, value=int(row["quantidade"]), step=1)
+                with e2:
+                    e_conta = st.text_input("Conta", value=str(row["conta"]))
+                    e_nome = st.text_input("Nome", value=str(row["nome"]))
+                    e_data = st.text_input("Data", value=str(row["data"]))
+                    e_quem = st.text_input("Quem entregou", value=str(row["quem_entregou"]))
+                e_obs = st.text_area("Observação", value=str(row.get("observacao", "")))
+                salvar_ed = st.form_submit_button("Salvar edição", type="primary")
+                if salvar_ed:
+                    hist.at[idx, "centro_lancamento"] = e_centro
+                    hist.at[idx, "conta"] = e_conta
+                    hist.at[idx, "re"] = e_re
+                    hist.at[idx, "nome"] = e_nome
+                    hist.at[idx, "centro_quem_pegou"] = e_centro_pegou
+                    hist.at[idx, "data"] = e_data
+                    hist.at[idx, "quantidade"] = int(e_qtd)
+                    hist.at[idx, "quem_entregou"] = e_quem
+                    hist.at[idx, "observacao"] = e_obs
+                    hist.to_csv(CSV_LANC, index=False)
+                    del st.session_state["editando"]
+                    st.success("Lançamento atualizado.")
+                    st.rerun()
+            if st.button("Cancelar edição"):
+                del st.session_state["editando"]
+                st.rerun()
