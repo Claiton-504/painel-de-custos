@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Painel de Custos do RH 2026
+Inclui: painel, consulta detalhada por conta e novo lançamento.
 """
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go
 from datetime import date
 
 st.set_page_config(
@@ -17,12 +17,14 @@ st.set_page_config(
 
 BASE = Path(__file__).resolve().parent
 CSV_LONG = BASE / "dados_longos.csv"
+CSV_DET = BASE / "detalhes_longos.csv"
 CSV_LANC = BASE / "lancamentos.csv"
+
 
 @st.cache_data(show_spinner="Carregando...")
 def carregar_dados():
     if not CSV_LONG.exists():
-        return None
+        return None, None
     df = pd.read_csv(CSV_LONG)
     df["Centro_Codigo"] = df["Centro_Codigo"].astype(str).str.strip()
     df["Centro_Nome"] = df["Centro_Nome"].astype(str).str.strip()
@@ -30,16 +32,27 @@ def carregar_dados():
     df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce").fillna(0)
     df["Valor_Abs"] = df["Valor"].abs()
     df["Mes"] = df["Mes"].astype(str)
-    return df
+
+    det = None
+    if CSV_DET.exists():
+        det = pd.read_csv(CSV_DET)
+        det["Centro_Codigo"] = det["Centro_Codigo"].astype(str).str.strip()
+        det["Conta_Codigo"] = det["Conta_Codigo"].astype(str).str.strip()
+        det["Valor"] = pd.to_numeric(det["Valor"], errors="coerce").fillna(0)
+        if "Mes_Trans" in det.columns:
+            det["Mes_Trans"] = pd.to_numeric(det["Mes_Trans"], errors="coerce").fillna(0).astype(int)
+    return df, det
+
 
 def carregar_lancamentos():
-    if CSV_LANC.exists():
-        return pd.read_csv(CSV_LANC)
     cols = [
         "data_registro", "centro_lancamento", "conta", "re", "nome",
-        "centro_quem_pegou", "data", "quantidade", "quem_entregou", "observacao"
+        "centro_quem_pegou", "data", "quantidade", "quem_entregou", "observacao",
     ]
+    if CSV_LANC.exists():
+        return pd.read_csv(CSV_LANC)
     return pd.DataFrame(columns=cols)
+
 
 def salvar_lancamento(registro):
     hist = carregar_lancamentos()
@@ -47,24 +60,31 @@ def salvar_lancamento(registro):
     hist.to_csv(CSV_LANC, index=False)
     return hist
 
-df = carregar_dados()
+
+df, det = carregar_dados()
 if df is None:
     st.error("Arquivo dados_longos.csv não encontrado na pasta do app.")
     st.stop()
 
-aba_painel, aba_lanc = st.tabs(["📊 Painel", "➕ Novo lançamento"])
+aba_painel, aba_detalhe, aba_lanc = st.tabs([
+    "📊 Painel",
+    "🔍 Consulta detalhada",
+    "➕ Novo lançamento",
+])
 
-# ── PAINEL ─────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# PAINEL
+# ═══════════════════════════════════════════════════════════
 with aba_painel:
     with st.sidebar:
         st.header("Filtros")
         centros = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
-        centro_sel = st.selectbox("Centro de custo", centros, key="filtro_centro")
+        centro_sel = st.selectbox("Centro de custo", centros, key="p_centro")
         meses = sorted(
             [m for m in df["Mes"].unique() if m != "Total" and str(m).isdigit()],
             key=lambda x: int(x),
         )
-        mes_sel = st.selectbox("Mês", ["Todos os meses"] + meses, key="filtro_mes")
+        mes_sel = st.selectbox("Mês", ["Todos os meses"] + meses, key="p_mes")
 
     d = df if centro_sel == "Todos os centros" else df[df["Centro"] == centro_sel]
     m = d["Conta_Codigo"] == "Total"
@@ -135,7 +155,7 @@ with aba_painel:
     tab["_o"] = tab["Status"].map(ordem)
     tab = tab.sort_values(["_o", "Realizado"], ascending=[True, False])
 
-    show = tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]]
+    show = tab[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status", "Conta_Codigo"]]
 
     def colorir(row):
         if row["Status"] == "Crítico":
@@ -145,8 +165,9 @@ with aba_painel:
         return ["background-color: #ecfdf5"] * len(row)
 
     st.subheader("Contas")
+    st.caption("Use a aba Consulta detalhada para pesquisar uma conta e ver os lançamentos.")
     st.dataframe(
-        show.style.apply(colorir, axis=1).format({
+        show[["Conta", "Orcado", "Realizado", "Saldo", "%", "Status"]].style.apply(colorir, axis=1).format({
             "Orcado": "R$ {:,.2f}",
             "Realizado": "R$ {:,.2f}",
             "Saldo": "R$ {:,.2f}",
@@ -157,7 +178,70 @@ with aba_painel:
         hide_index=True,
     )
 
-# ── NOVO LANÇAMENTO ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+# CONSULTA DETALHADA (conta por conta + lançamentos)
+# ═══════════════════════════════════════════════════════════
+with aba_detalhe:
+    st.title("Consulta detalhada")
+    st.caption("Pesquise uma conta e veja os lançamentos que compõem o valor.")
+
+    centros_d = ["Todos os centros"] + sorted(df["Centro"].unique().tolist())
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        centro_d = st.selectbox("Centro de custo", centros_d, key="d_centro")
+    with colf2:
+        mes_d = st.selectbox("Mês", ["Todos os meses"] + sorted(
+            [m for m in df["Mes"].unique() if m != "Total" and str(m).isdigit()],
+            key=lambda x: int(x),
+        ), key="d_mes")
+
+    d2 = df if centro_d == "Todos os centros" else df[df["Centro"] == centro_d]
+    contas_opts = (
+        d2[d2["Conta_Codigo"] != "Total"][["Conta_Codigo", "Conta_Descricao"]]
+        .drop_duplicates()
+        .sort_values("Conta_Descricao")
+    )
+    contas_opts["Label"] = contas_opts["Conta_Codigo"].astype(str).str.zfill(10) + " | " + contas_opts["Conta_Descricao"]
+    opcoes = ["— selecione uma conta —"] + contas_opts["Label"].tolist()
+    conta_escolhida = st.selectbox("Conta", opcoes)
+
+    if not conta_escolhida.startswith("—"):
+        cod_raw = conta_escolhida.split(" | ")[0].lstrip("0")
+        st.subheader(f"Lançamentos · {conta_escolhida}")
+
+        if det is not None and not det.empty:
+            f = det.copy()
+            if centro_d != "Todos os centros":
+                cc = centro_d.split(" - ")[0].strip()
+                f = f[f["Centro_Codigo"] == cc]
+            f = f[f["Conta_Codigo"].astype(str).str.lstrip("0") == cod_raw]
+            if mes_d != "Todos os meses" and "Mes_Trans" in f.columns:
+                f = f[f["Mes_Trans"] == int(mes_d)]
+
+            cols = [c for c in ["Centro_Codigo", "DOC", "Data", "Clifor", "Item", "QT", "Mes_Trans", "Valor"] if c in f.columns]
+            if f.empty or not cols:
+                st.info("Nenhum lançamento analítico encontrado para esta conta com os filtros atuais.")
+            else:
+                st.dataframe(
+                    f[cols].sort_values("Valor", ascending=False).style.format({"Valor": "R$ {:,.2f}"}),
+                    use_container_width=True,
+                    height=400,
+                    hide_index=True,
+                )
+        else:
+            # Fallback: mostra valores mensais da conta a partir de dados_longos
+            st.warning("Arquivo detalhes_longos.csv não encontrado. Mostrando valores mensais da conta.")
+            sub = d2[(d2["Conta_Codigo"].astype(str).str.lstrip("0") == cod_raw) & (d2["Tipo"].isin(["Prev.", "Real."]))]
+            sub = sub[sub["Mes"] != "Total"]
+            if sub.empty:
+                st.info("Sem dados mensais para esta conta.")
+            else:
+                piv = sub.pivot_table(index="Mes", columns="Tipo", values="Valor_Abs", aggfunc="sum").reset_index()
+                st.dataframe(piv, use_container_width=True, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════
+# NOVO LANÇAMENTO
+# ═══════════════════════════════════════════════════════════
 with aba_lanc:
     st.title("Novo lançamento")
     st.caption("Registre entregas, consumos ou alocações de qualquer centro e conta.")
